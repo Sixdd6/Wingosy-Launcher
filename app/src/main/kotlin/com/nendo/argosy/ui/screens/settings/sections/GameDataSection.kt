@@ -41,10 +41,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.nendo.argosy.ui.components.ActionPreference
 import com.nendo.argosy.ui.components.CyclePreference
-import com.nendo.argosy.ui.components.ListSection
 import com.nendo.argosy.ui.components.NavigationPreference
 import com.nendo.argosy.ui.components.SectionFocusedScroll
 import com.nendo.argosy.ui.components.SwitchPreference
+import com.nendo.argosy.ui.screens.settings.menu.SettingsLayout
 import com.nendo.argosy.ui.screens.settings.ConnectionStatus
 import com.nendo.argosy.ui.screens.settings.InstalledSteamLauncher
 import com.nendo.argosy.ui.screens.settings.NotInstalledSteamLauncher
@@ -147,43 +147,35 @@ internal fun buildGameDataItemsFromState(state: SettingsUiState): List<GameDataI
     )
 }
 
-// --- Focus helpers ---
+// --- Layout + focus helpers ---
+
+internal fun createGameDataLayout(items: List<GameDataItem>) =
+    SettingsLayout<GameDataItem, Unit>(
+        allItems = items,
+        isFocusable = { it.isFocusable },
+        visibleWhen = { _, _ -> true },
+        sectionOf = { it.section }
+    )
+
+internal data class GameDataLayoutInfo(
+    val layout: SettingsLayout<GameDataItem, Unit>,
+    val items: List<GameDataItem>
+)
+
+internal fun createGameDataLayoutInfo(items: List<GameDataItem>): GameDataLayoutInfo =
+    GameDataLayoutInfo(createGameDataLayout(items), items)
 
 internal fun focusableItems(items: List<GameDataItem>): List<GameDataItem> =
-    items.filter { it.isFocusable }
+    createGameDataLayout(items).focusableItems(Unit)
 
 internal fun gameDataItemAtFocusIndex(index: Int, items: List<GameDataItem>): GameDataItem? =
-    focusableItems(items).getOrNull(index)
+    createGameDataLayout(items).itemAtFocusIndex(index, Unit)
 
 internal fun gameDataMaxFocusIndex(items: List<GameDataItem>): Int =
-    (focusableItems(items).size - 1).coerceAtLeast(0)
+    createGameDataLayout(items).maxFocusIndex(Unit)
 
 internal fun gameDataFocusIndexOf(item: GameDataItem, items: List<GameDataItem>): Int =
-    focusableItems(items).indexOf(item)
-
-private fun gameDataFocusToListIndex(focusIndex: Int, items: List<GameDataItem>): Int {
-    val focusable = focusableItems(items)
-    val item = focusable.getOrNull(focusIndex) ?: return focusIndex
-    return items.indexOf(item)
-}
-
-internal fun gameDataBuildSections(items: List<GameDataItem>): List<ListSection> {
-    val focusable = focusableItems(items)
-    val sectionNames = items.map { it.section }.distinct()
-
-    return sectionNames.mapNotNull { sectionName ->
-        val sectionItems = items.filter { it.section == sectionName }
-        val sectionFocusable = focusable.filter { it.section == sectionName }
-        if (sectionItems.isEmpty() || sectionFocusable.isEmpty()) return@mapNotNull null
-
-        ListSection(
-            listStartIndex = items.indexOf(sectionItems.first()),
-            listEndIndex = items.indexOf(sectionItems.last()),
-            focusStartIndex = focusable.indexOf(sectionFocusable.first()),
-            focusEndIndex = focusable.indexOf(sectionFocusable.last())
-        )
-    }
-}
+    createGameDataLayout(items).focusIndexOf(item, Unit)
 
 // --- Composables ---
 
@@ -250,17 +242,18 @@ private fun GameDataContent(
         )
     }
 
-    val sections = remember(allItems) { gameDataBuildSections(allItems) }
+    val layout = remember(allItems) { createGameDataLayout(allItems) }
+    val sections = remember(allItems) { layout.buildSections(Unit) }
 
     fun isFocused(item: GameDataItem): Boolean {
         if (hasDialogOpen) return false
-        return uiState.focusedIndex == gameDataFocusIndexOf(item, allItems)
+        return uiState.focusedIndex == layout.focusIndexOf(item, Unit)
     }
 
     SectionFocusedScroll(
         listState = listState,
         focusedIndex = uiState.focusedIndex,
-        focusToListIndex = { gameDataFocusToListIndex(it, allItems) },
+        focusToListIndex = { layout.focusToListIndex(it, Unit) },
         sections = sections
     )
 

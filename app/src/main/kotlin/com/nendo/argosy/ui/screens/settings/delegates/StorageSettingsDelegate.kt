@@ -115,10 +115,10 @@ class StorageSettingsDelegate @Inject constructor(
         }
     }
 
-    fun cycleInstantDownloadThreshold(scope: CoroutineScope) {
+    fun cycleInstantDownloadThreshold(scope: CoroutineScope, direction: Int = 1) {
         scope.launch {
             val thresholds = listOf(50, 100, 250, 500)
-            val next = cycleInList(_state.value.instantDownloadThresholdMb, thresholds)
+            val next = cycleInList(_state.value.instantDownloadThresholdMb, thresholds, direction)
             preferencesRepository.setInstantDownloadThresholdMb(next)
             _state.update { it.copy(instantDownloadThresholdMb = next) }
         }

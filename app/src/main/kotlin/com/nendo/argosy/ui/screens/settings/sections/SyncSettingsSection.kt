@@ -31,15 +31,48 @@ import com.nendo.argosy.data.preferences.SyncFilterPreferences
 import com.nendo.argosy.ui.components.ActionPreference
 import com.nendo.argosy.ui.components.FocusedScroll
 import com.nendo.argosy.ui.components.ImageCachePreference
+import com.nendo.argosy.ui.components.SectionFocusedScroll
 import com.nendo.argosy.ui.components.SwitchPreference
 import com.nendo.argosy.ui.screens.settings.SettingsUiState
 import com.nendo.argosy.ui.screens.settings.SettingsViewModel
 import com.nendo.argosy.ui.screens.settings.components.PlatformFiltersModal
 import com.nendo.argosy.ui.screens.settings.components.SectionHeader
 import com.nendo.argosy.ui.screens.settings.components.SyncFiltersModal
+import com.nendo.argosy.ui.screens.settings.menu.SettingsLayout
 import androidx.compose.ui.unit.dp
 import com.nendo.argosy.ui.theme.Dimens
 import com.nendo.argosy.ui.theme.Motion
+
+// --- Item definitions ---
+
+internal sealed class SyncSettingsItem(val key: String, val section: String) {
+    val isFocusable: Boolean get() = this !is MediaHeader
+
+    data object PlatformFilters : SyncSettingsItem("platformFilters", "filters")
+    data object MetadataFilters : SyncSettingsItem("metadataFilters", "filters")
+    data object MediaHeader : SyncSettingsItem("mediaHeader", "media")
+    data object CacheScreenshots : SyncSettingsItem("cacheScreenshots", "media")
+    data object ImageCacheLocation : SyncSettingsItem("imageCacheLocation", "media")
+}
+
+private val syncSettingsLayout = SettingsLayout<SyncSettingsItem, Unit>(
+    allItems = listOf(
+        SyncSettingsItem.PlatformFilters,
+        SyncSettingsItem.MetadataFilters,
+        SyncSettingsItem.MediaHeader,
+        SyncSettingsItem.CacheScreenshots,
+        SyncSettingsItem.ImageCacheLocation
+    ),
+    isFocusable = { it.isFocusable },
+    visibleWhen = { _, _ -> true },
+    sectionOf = { it.section }
+)
+
+internal fun syncSettingsItemAtFocusIndex(index: Int): SyncSettingsItem? =
+    syncSettingsLayout.itemAtFocusIndex(index, Unit)
+
+internal fun syncSettingsMaxFocusIndex(): Int =
+    syncSettingsLayout.maxFocusIndex(Unit)
 
 @Composable
 fun SyncSettingsSection(
@@ -56,9 +89,17 @@ fun SyncSettingsSection(
         label = "syncFiltersModalBlur"
     )
 
-    FocusedScroll(
+    fun isFocused(item: SyncSettingsItem): Boolean =
+        uiState.focusedIndex == syncSettingsLayout.focusIndexOf(item, Unit)
+
+    val sections = syncSettingsLayout.buildSections(Unit)
+    val visibleItems = syncSettingsLayout.visibleItems(Unit)
+
+    SectionFocusedScroll(
         listState = listState,
-        focusedIndex = uiState.focusedIndex
+        focusedIndex = uiState.focusedIndex,
+        focusToListIndex = { syncSettingsLayout.focusToListIndex(it, Unit) },
+        sections = sections
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -67,59 +108,63 @@ fun SyncSettingsSection(
             modifier = Modifier.fillMaxSize().padding(Dimens.spacingMd).blur(modalBlur),
             verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
         ) {
-            item {
-                val enabledCount = uiState.syncSettings.enabledPlatformCount
-                val totalCount = uiState.syncSettings.totalPlatforms
-                val subtitle = if (totalCount > 0) "$enabledCount/$totalCount platforms" else "Select platforms to sync"
-                ActionPreference(
-                    icon = Icons.Default.FilterList,
-                    title = "Platform Filters",
-                    subtitle = subtitle,
-                    isFocused = uiState.focusedIndex == 0,
-                    onClick = { viewModel.showPlatformFiltersModal() }
-                )
-            }
-            item {
-                val filtersSubtitle = buildFiltersSubtitle(uiState.syncSettings.syncFilters)
-                ActionPreference(
-                    icon = Icons.Default.Tune,
-                    title = "Metadata Filters",
-                    subtitle = filtersSubtitle,
-                    isFocused = uiState.focusedIndex == 1,
-                    onClick = { viewModel.showSyncFiltersModal() }
-                )
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(Dimens.spacingMd))
-                SectionHeader("MEDIA")
-            }
-            item {
-                SwitchPreference(
-                    title = "Cache Screenshots",
-                    subtitle = "Boxart and backgrounds are always cached",
-                    isEnabled = uiState.server.syncScreenshotsEnabled,
-                    isFocused = uiState.focusedIndex == 2,
-                    onToggle = { viewModel.toggleSyncScreenshots() }
-                )
-            }
-            item {
-                val cachePath = uiState.syncSettings.imageCachePath
-                val displayPath = if (cachePath != null) {
-                    "${cachePath.substringAfterLast("/")}/argosy_images"
-                } else {
-                    "Internal (default)"
+            items(visibleItems.size, key = { visibleItems[it].key }) { index ->
+                val item = visibleItems[index]
+                when (item) {
+                    SyncSettingsItem.PlatformFilters -> {
+                        val enabledCount = uiState.syncSettings.enabledPlatformCount
+                        val totalCount = uiState.syncSettings.totalPlatforms
+                        val subtitle = if (totalCount > 0) "$enabledCount/$totalCount platforms" else "Select platforms to sync"
+                        ActionPreference(
+                            icon = Icons.Default.FilterList,
+                            title = "Platform Filters",
+                            subtitle = subtitle,
+                            isFocused = isFocused(item),
+                            onClick = { viewModel.showPlatformFiltersModal() }
+                        )
+                    }
+                    SyncSettingsItem.MetadataFilters -> {
+                        val filtersSubtitle = buildFiltersSubtitle(uiState.syncSettings.syncFilters)
+                        ActionPreference(
+                            icon = Icons.Default.Tune,
+                            title = "Metadata Filters",
+                            subtitle = filtersSubtitle,
+                            isFocused = isFocused(item),
+                            onClick = { viewModel.showSyncFiltersModal() }
+                        )
+                    }
+                    SyncSettingsItem.MediaHeader -> {
+                        Spacer(modifier = Modifier.height(Dimens.spacingMd))
+                        SectionHeader("MEDIA")
+                    }
+                    SyncSettingsItem.CacheScreenshots -> {
+                        SwitchPreference(
+                            title = "Cache Screenshots",
+                            subtitle = "Boxart and backgrounds are always cached",
+                            isEnabled = uiState.server.syncScreenshotsEnabled,
+                            isFocused = isFocused(item),
+                            onToggle = { viewModel.toggleSyncScreenshots() }
+                        )
+                    }
+                    SyncSettingsItem.ImageCacheLocation -> {
+                        val cachePath = uiState.syncSettings.imageCachePath
+                        val displayPath = if (cachePath != null) {
+                            "${cachePath.substringAfterLast("/")}/argosy_images"
+                        } else {
+                            "Internal (default)"
+                        }
+                        ImageCachePreference(
+                            title = "Image Cache Location",
+                            displayPath = displayPath,
+                            hasCustomPath = cachePath != null,
+                            isFocused = isFocused(item),
+                            actionIndex = uiState.syncSettings.imageCacheActionIndex,
+                            isMigrating = uiState.syncSettings.isImageCacheMigrating,
+                            onChange = { viewModel.openImageCachePicker() },
+                            onReset = { viewModel.resetImageCacheToDefault() }
+                        )
+                    }
                 }
-                ImageCachePreference(
-                    title = "Image Cache Location",
-                    displayPath = displayPath,
-                    hasCustomPath = cachePath != null,
-                    isFocused = uiState.focusedIndex == 3,
-                    actionIndex = uiState.syncSettings.imageCacheActionIndex,
-                    isMigrating = uiState.syncSettings.isImageCacheMigrating,
-                    onChange = { viewModel.openImageCachePicker() },
-                    onReset = { viewModel.resetImageCacheToDefault() }
-                )
             }
 
             if (imageCacheProgress.isProcessing) {

@@ -560,7 +560,7 @@ class SettingsViewModel @Inject constructor(
 
     fun adjustMaxConcurrentDownloads(delta: Int) = routeAdjustMaxConcurrentDownloads(this, delta)
 
-    fun cycleInstantDownloadThreshold() = storageDelegate.cycleInstantDownloadThreshold(viewModelScope)
+    fun cycleInstantDownloadThreshold(direction: Int = 1) = storageDelegate.cycleInstantDownloadThreshold(viewModelScope, direction)
     fun toggleScreenDimmer() = storageDelegate.toggleScreenDimmer(viewModelScope)
     fun cycleScreenDimmerTimeout() = storageDelegate.cycleScreenDimmerTimeout(viewModelScope)
 
@@ -673,11 +673,6 @@ class SettingsViewModel @Inject constructor(
     fun installGpuDriverFromFile(filePath: String) = biosDelegate.installGpuDriverFromFile(filePath, viewModelScope)
     fun dismissGpuDriverPrompt() = biosDelegate.dismissGpuDriverPrompt()
     fun moveGpuDriverPromptFocus(delta: Int) = biosDelegate.moveGpuDriverPromptFocus(delta)
-
-    internal fun buildBiosFocusMapping(
-        platformGroups: List<BiosPlatformGroup>,
-        expandedIndex: Int
-    ) = routeBuildBiosFocusMapping(platformGroups, expandedIndex)
 
     override fun onCleared() {
         super.onCleared()

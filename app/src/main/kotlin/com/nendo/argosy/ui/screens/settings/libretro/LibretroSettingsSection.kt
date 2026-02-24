@@ -17,7 +17,22 @@ import androidx.compose.ui.Modifier
 import com.nendo.argosy.data.platform.PlatformWeightRegistry
 import com.nendo.argosy.ui.components.ListSection
 import com.nendo.argosy.ui.components.SectionFocusedScroll
+import com.nendo.argosy.ui.screens.settings.menu.SettingsLayout
 import com.nendo.argosy.ui.theme.Dimens
+
+data class LibretroVisibilityState(
+    val platformSlug: String?,
+    val canEnableBFI: Boolean
+)
+
+private val libretroSettingsLayout = SettingsLayout<LibretroSettingDef, LibretroVisibilityState>(
+    allItems = LibretroSettingDef.ALL,
+    isFocusable = { true },
+    visibleWhen = { item, state ->
+        PlatformWeightRegistry.isSettingVisible(item, state.platformSlug, state.canEnableBFI)
+    },
+    sectionOf = { it.section }
+)
 
 @Composable
 fun LibretroSettingsSection(
@@ -31,10 +46,12 @@ fun LibretroSettingsSection(
 ) {
     val isPerPlatform = platformSlug != null
 
-    val visibleSettings = remember(platformSlug, canEnableBFI) {
-        LibretroSettingDef.ALL.filter { setting ->
-            PlatformWeightRegistry.isSettingVisible(setting, platformSlug, canEnableBFI)
-        }
+    val visibilityState = remember(platformSlug, canEnableBFI) {
+        LibretroVisibilityState(platformSlug, canEnableBFI)
+    }
+
+    val visibleSettings = remember(visibilityState) {
+        libretroSettingsLayout.focusableItems(visibilityState)
     }
 
     val groupedBySection = remember(visibleSettings) {
@@ -54,7 +71,7 @@ fun LibretroSettingsSection(
     }
 
     val sections = remember(flatItems, visibleSettings) {
-        buildSections(flatItems, visibleSettings)
+        buildFlatItemSections(flatItems, visibleSettings)
     }
 
     SectionFocusedScroll(
@@ -118,7 +135,7 @@ private sealed class LibretroSettingsListItem(val key: String) {
     data class Setting(val def: LibretroSettingDef) : LibretroSettingsListItem(def.key)
 }
 
-private fun buildSections(
+private fun buildFlatItemSections(
     flatItems: List<LibretroSettingsListItem>,
     visibleSettings: List<LibretroSettingDef>
 ): List<ListSection> {
@@ -127,38 +144,32 @@ private fun buildSections(
     }
 
     return sectionNames.mapNotNull { sectionName ->
-        val sectionItems = flatItems.filter { item ->
-            when (item) {
-                is LibretroSettingsListItem.Header -> item.section == sectionName
-                is LibretroSettingsListItem.Setting -> item.def.section == sectionName
-            }
-        }
         val sectionSettings = visibleSettings.filter { it.section == sectionName }
-        if (sectionItems.isEmpty() || sectionSettings.isEmpty()) return@mapNotNull null
+        if (sectionSettings.isEmpty()) return@mapNotNull null
+
+        val firstFlatIdx = flatItems.indexOfFirst {
+            it is LibretroSettingsListItem.Header && it.section == sectionName
+        }
+        val lastFlatIdx = flatItems.indexOfLast {
+            it is LibretroSettingsListItem.Setting && it.def.section == sectionName
+        }
+        if (firstFlatIdx < 0 || lastFlatIdx < 0) return@mapNotNull null
 
         ListSection(
-            listStartIndex = flatItems.indexOf(sectionItems.first()),
-            listEndIndex = flatItems.indexOf(sectionItems.last()),
+            listStartIndex = firstFlatIdx,
+            listEndIndex = lastFlatIdx,
             focusStartIndex = visibleSettings.indexOf(sectionSettings.first()),
             focusEndIndex = visibleSettings.indexOf(sectionSettings.last())
         )
     }
 }
 
-fun libretroSettingsMaxFocusIndex(platformSlug: String?, canEnableBFI: Boolean): Int {
-    val visibleCount = LibretroSettingDef.ALL.count { setting ->
-        PlatformWeightRegistry.isSettingVisible(setting, platformSlug, canEnableBFI)
-    }
-    return (visibleCount - 1).coerceAtLeast(0)
-}
+fun libretroSettingsMaxFocusIndex(platformSlug: String?, canEnableBFI: Boolean): Int =
+    libretroSettingsLayout.maxFocusIndex(LibretroVisibilityState(platformSlug, canEnableBFI))
 
 fun libretroSettingsItemAtFocusIndex(
     index: Int,
     platformSlug: String?,
     canEnableBFI: Boolean
-): LibretroSettingDef? {
-    val visibleSettings = LibretroSettingDef.ALL.filter { setting ->
-        PlatformWeightRegistry.isSettingVisible(setting, platformSlug, canEnableBFI)
-    }
-    return visibleSettings.getOrNull(index)
-}
+): LibretroSettingDef? =
+    libretroSettingsLayout.itemAtFocusIndex(index, LibretroVisibilityState(platformSlug, canEnableBFI))

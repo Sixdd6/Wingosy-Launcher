@@ -7,6 +7,9 @@ import com.nendo.argosy.ui.input.InputResult
 import com.nendo.argosy.ui.input.SoundType
 import com.nendo.argosy.ui.screens.settings.libretro.LibretroSettingDef
 import com.nendo.argosy.ui.screens.settings.sections.AboutItem
+import com.nendo.argosy.ui.screens.settings.sections.BiosItem
+import com.nendo.argosy.ui.screens.settings.sections.biosItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.biosMaxFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.BoxArtItem
 import com.nendo.argosy.ui.screens.settings.sections.ControlsItem
 import com.nendo.argosy.ui.screens.settings.sections.HomeScreenItem
@@ -34,11 +37,15 @@ import com.nendo.argosy.ui.screens.settings.sections.permissionsMaxFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.storageItemAtFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.storageMaxFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.GameDataItem
+import com.nendo.argosy.ui.screens.settings.sections.SyncSettingsItem
+import com.nendo.argosy.ui.screens.settings.sections.coreManagementMaxFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.buildGameDataItemsFromState
 import com.nendo.argosy.ui.screens.settings.sections.gameDataItemAtFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.gameDataMaxFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.gameDataFocusIndexOf
 import com.nendo.argosy.ui.screens.settings.sections.focusableItems
+import com.nendo.argosy.ui.screens.settings.sections.syncSettingsItemAtFocusIndex
+import com.nendo.argosy.ui.screens.settings.sections.syncSettingsMaxFocusIndex
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -96,11 +103,11 @@ internal fun routeConfirm(vm: SettingsViewModel): InputResult {
             InputResult.HANDLED
         }
         SettingsSection.SYNC_SETTINGS -> {
-            when (state.focusedIndex) {
-                0 -> vm.showPlatformFiltersModal()
-                1 -> vm.showSyncFiltersModal()
-                2 -> { vm.toggleSyncScreenshots(); return InputResult.handled(SoundType.TOGGLE) }
-                3 -> {
+            when (syncSettingsItemAtFocusIndex(state.focusedIndex)) {
+                SyncSettingsItem.PlatformFilters -> vm.showPlatformFiltersModal()
+                SyncSettingsItem.MetadataFilters -> vm.showSyncFiltersModal()
+                SyncSettingsItem.CacheScreenshots -> { vm.toggleSyncScreenshots(); return InputResult.handled(SoundType.TOGGLE) }
+                SyncSettingsItem.ImageCacheLocation -> {
                     if (!state.syncSettings.isImageCacheMigrating) {
                         if (state.syncSettings.imageCacheActionIndex == 0) {
                             vm.openImageCachePicker()
@@ -109,6 +116,7 @@ internal fun routeConfirm(vm: SettingsViewModel): InputResult {
                         }
                     }
                 }
+                SyncSettingsItem.MediaHeader, null -> {}
             }
             InputResult.HANDLED
         }
@@ -364,46 +372,39 @@ private fun routeEmulatorsConfirm(vm: SettingsViewModel, state: SettingsUiState)
 }
 
 private fun routeBiosConfirm(vm: SettingsViewModel, state: SettingsUiState): InputResult {
-    when (state.focusedIndex) {
-        0 -> {
-            val actionIndex = state.bios.actionIndex
-            if (actionIndex == 0 && state.bios.missingFiles > 0) {
+    val bios = state.bios
+    when (val item = biosItemAtFocusIndex(state.focusedIndex, bios.platformGroups, bios.expandedPlatformIndex)) {
+        BiosItem.Summary -> {
+            val actionIndex = bios.actionIndex
+            if (actionIndex == 0 && bios.missingFiles > 0) {
                 vm.downloadAllBios()
-            } else if (actionIndex == 1 && state.bios.downloadedFiles > 0) {
+            } else if (actionIndex == 1 && bios.downloadedFiles > 0) {
                 vm.distributeAllBios()
             }
         }
-        1 -> {
-            if (!state.bios.isBiosMigrating) {
-                if (state.bios.biosPathActionIndex == 0) {
+        BiosItem.BiosPath -> {
+            if (!bios.isBiosMigrating) {
+                if (bios.biosPathActionIndex == 0) {
                     vm.openBiosFolderPicker()
                 } else {
                     vm.resetBiosToDefault()
                 }
             }
         }
-        else -> {
-            val bios = state.bios
-            val focusMapping = vm.buildBiosFocusMapping(bios.platformGroups, bios.expandedPlatformIndex)
-            val (platformIndex, isChildItem) = focusMapping.getPlatformAndChildInfo(state.focusedIndex)
-
-            if (platformIndex >= 0 && platformIndex < bios.platformGroups.size) {
-                val group = bios.platformGroups[platformIndex]
-                if (isChildItem) {
-                    val childIndex = focusMapping.getChildIndex(state.focusedIndex, platformIndex)
-                    val firmware = group.firmwareItems.getOrNull(childIndex)
-                    if (firmware != null && !firmware.isDownloaded) {
-                        vm.downloadSingleBios(firmware.rommId)
-                    }
-                } else {
-                    if (bios.platformSubFocusIndex == 1 && !group.isComplete) {
-                        vm.downloadBiosForPlatform(group.platformSlug)
-                    } else {
-                        vm.toggleBiosPlatformExpanded(platformIndex)
-                    }
-                }
+        is BiosItem.Platform -> {
+            val group = item.group
+            if (bios.platformSubFocusIndex == 1 && !group.isComplete) {
+                vm.downloadBiosForPlatform(group.platformSlug)
+            } else {
+                vm.toggleBiosPlatformExpanded(item.index)
             }
         }
+        is BiosItem.FirmwareFile -> {
+            if (!item.firmware.isDownloaded) {
+                vm.downloadSingleBios(item.firmware.rommId)
+            }
+        }
+        else -> {}
     }
     return InputResult.HANDLED
 }
@@ -604,7 +605,7 @@ private fun computeMaxFocusIndex(
     } else {
         gameDataMaxFocusIndex(buildGameDataItemsFromState(state))
     }
-    SettingsSection.SYNC_SETTINGS -> 3
+    SettingsSection.SYNC_SETTINGS -> syncSettingsMaxFocusIndex()
     SettingsSection.STEAM_SETTINGS -> 1 + state.steam.installedLaunchers.size
     SettingsSection.RETRO_ACHIEVEMENTS -> if (state.retroAchievements.showLoginForm) 3 else 0
     SettingsSection.STORAGE -> storageMaxFocusIndex(
@@ -628,17 +629,10 @@ private fun computeMaxFocusIndex(
         state.builtinVideo,
         state.platformLibretro.platformSettings
     )
-    SettingsSection.CORE_MANAGEMENT -> (state.coreManagement.platforms.size - 1).coerceAtLeast(0)
+    SettingsSection.CORE_MANAGEMENT -> coreManagementMaxFocusIndex(state.coreManagement.platforms)
     SettingsSection.SHADER_STACK -> com.nendo.argosy.ui.screens.settings.sections.shaderStackMaxFocusIndex(vm.shaderChainManager.shaderStack)
     SettingsSection.FRAME_PICKER -> com.nendo.argosy.ui.screens.settings.sections.framePickerMaxFocusIndex(vm.getFrameRegistry())
-    SettingsSection.BIOS -> {
-        val bios = state.bios
-        val platformCount = bios.platformGroups.size
-        val expandedItems = if (bios.expandedPlatformIndex >= 0) {
-            bios.platformGroups.getOrNull(bios.expandedPlatformIndex)?.firmwareItems?.size ?: 0
-        } else 0
-        (1 + platformCount + expandedItems).coerceAtLeast(1)
-    }
+    SettingsSection.BIOS -> biosMaxFocusIndex(state.bios.platformGroups, state.bios.expandedPlatformIndex)
     SettingsSection.PERMISSIONS -> permissionsMaxFocusIndex(state.permissions)
     SettingsSection.ABOUT -> aboutMaxFocusIndex(state.fileLoggingPath != null)
 }

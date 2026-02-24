@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,7 +22,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,7 +30,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import com.nendo.argosy.ui.components.ListSection
 import com.nendo.argosy.ui.components.SectionFocusedScroll
@@ -40,42 +38,121 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.window.Dialog
-import com.nendo.argosy.ui.components.ActionPreference
 import com.nendo.argosy.ui.components.ExpandedChildItem
 import com.nendo.argosy.ui.components.ImageCachePreference
+import com.nendo.argosy.ui.screens.settings.BiosFirmwareItem
 import com.nendo.argosy.ui.screens.settings.BiosPlatformGroup
 import com.nendo.argosy.ui.screens.settings.DistributeResultItem
 import com.nendo.argosy.ui.screens.settings.SettingsUiState
 import com.nendo.argosy.ui.screens.settings.SettingsViewModel
+import com.nendo.argosy.ui.screens.settings.menu.SettingsLayout
 import com.nendo.argosy.ui.theme.Dimens
 import com.nendo.argosy.ui.theme.LocalLauncherTheme
+
+// --- Item definitions ---
+
+internal sealed class BiosItem(val key: String, val section: String) {
+    val isFocusable: Boolean get() = this !is PlatformsHeader && this !is EmptyNotice && this !is FooterNote
+
+    data object Summary : BiosItem("summary", "actions")
+    data object BiosPath : BiosItem("biosPath", "actions")
+    data object PlatformsHeader : BiosItem("platformsHeader", "platforms")
+    data object EmptyNotice : BiosItem("emptyNotice", "platforms")
+    data class Platform(val group: BiosPlatformGroup, val index: Int) : BiosItem("platform_${group.platformSlug}", "platforms")
+    data class FirmwareFile(val firmware: BiosFirmwareItem, val platformIndex: Int, val fileIndex: Int) :
+        BiosItem("firmware_${firmware.id}", "platforms")
+    data object FooterNote : BiosItem("footerNote", "footer")
+}
+
+internal fun buildBiosItems(
+    platformGroups: List<BiosPlatformGroup>,
+    expandedIndex: Int
+): List<BiosItem> = buildList {
+    add(BiosItem.Summary)
+    add(BiosItem.BiosPath)
+    add(BiosItem.PlatformsHeader)
+
+    if (platformGroups.isEmpty()) {
+        add(BiosItem.EmptyNotice)
+    } else {
+        for ((index, group) in platformGroups.withIndex()) {
+            add(BiosItem.Platform(group, index))
+            if (index == expandedIndex) {
+                for ((fileIndex, firmware) in group.firmwareItems.withIndex()) {
+                    add(BiosItem.FirmwareFile(firmware, index, fileIndex))
+                }
+            }
+        }
+    }
+
+    add(BiosItem.FooterNote)
+}
+
+internal fun createBiosLayout(items: List<BiosItem>) =
+    SettingsLayout<BiosItem, Unit>(
+        allItems = items,
+        isFocusable = { it.isFocusable },
+        visibleWhen = { _, _ -> true },
+        sectionOf = { it.section }
+    )
+
+internal data class BiosLayoutInfo(
+    val layout: SettingsLayout<BiosItem, Unit>,
+    val items: List<BiosItem>
+)
+
+internal fun createBiosLayoutInfo(
+    platformGroups: List<BiosPlatformGroup>,
+    expandedIndex: Int
+): BiosLayoutInfo {
+    val items = buildBiosItems(platformGroups, expandedIndex)
+    return BiosLayoutInfo(createBiosLayout(items), items)
+}
+
+internal fun biosItemAtFocusIndex(
+    index: Int,
+    platformGroups: List<BiosPlatformGroup>,
+    expandedIndex: Int
+): BiosItem? {
+    val items = buildBiosItems(platformGroups, expandedIndex)
+    return createBiosLayout(items).itemAtFocusIndex(index, Unit)
+}
+
+internal fun biosMaxFocusIndex(
+    platformGroups: List<BiosPlatformGroup>,
+    expandedIndex: Int
+): Int {
+    val items = buildBiosItems(platformGroups, expandedIndex)
+    return createBiosLayout(items).maxFocusIndex(Unit)
+}
+
+internal fun biosSections(
+    platformGroups: List<BiosPlatformGroup>,
+    expandedIndex: Int
+): List<ListSection> {
+    val items = buildBiosItems(platformGroups, expandedIndex)
+    return createBiosLayout(items).buildSections(Unit)
+}
 
 @Composable
 fun BiosSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     val listState = rememberLazyListState()
     val bios = uiState.bios
 
-    val focusMapping = buildBiosFocusMapping(
-        platformGroups = bios.platformGroups,
-        expandedIndex = bios.expandedPlatformIndex
-    )
-
-    val maxPlatformFocusIndex = focusMapping.getMaxFocusIndex()
-    val platformListItemCount = focusMapping.getPlatformListItemCount()
-
-    val sections = listOf(
-        ListSection(listStartIndex = 0, listEndIndex = 1, focusStartIndex = 0, focusEndIndex = 1),
-        ListSection(listStartIndex = 2, listEndIndex = 3 + platformListItemCount, focusStartIndex = 2, focusEndIndex = maxPlatformFocusIndex)
-    )
-
-    val focusToListIndex: (Int) -> Int = { focusIndex ->
-        focusMapping.focusToScrollIndex(focusIndex)
+    val allItems = remember(bios.platformGroups, bios.expandedPlatformIndex) {
+        buildBiosItems(bios.platformGroups, bios.expandedPlatformIndex)
     }
+    val layout = remember(allItems) { createBiosLayout(allItems) }
+    val visibleItems = remember(allItems) { layout.visibleItems(Unit) }
+    val sections = remember(allItems) { layout.buildSections(Unit) }
+
+    fun isFocused(item: BiosItem): Boolean =
+        uiState.focusedIndex == layout.focusIndexOf(item, Unit)
 
     SectionFocusedScroll(
         listState = listState,
         focusedIndex = uiState.focusedIndex,
-        focusToListIndex = focusToListIndex,
+        focusToListIndex = { layout.focusToListIndex(it, Unit) },
         sections = sections
     )
 
@@ -84,110 +161,106 @@ fun BiosSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
         modifier = Modifier.fillMaxSize().padding(Dimens.spacingMd),
         verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
     ) {
-        item {
-            BiosSummaryCard(
-                totalFiles = bios.totalFiles,
-                downloadedFiles = bios.downloadedFiles,
-                isDownloading = bios.isDownloading,
-                downloadingFileName = bios.downloadingFileName,
-                downloadProgress = bios.downloadProgress,
-                isDistributing = bios.isDistributing,
-                isFocused = uiState.focusedIndex == 0,
-                actionIndex = bios.actionIndex,
-                onDownloadAll = { viewModel.downloadAllBios() },
-                onDistributeAll = { viewModel.distributeAllBios() }
-            )
-        }
-
-        item {
-            val pathDisplay = bios.customBiosPath?.let { path ->
-                val folderName = path.substringAfterLast("/")
-                if (folderName.equals("bios", ignoreCase = true)) {
-                    folderName
-                } else {
-                    "$folderName/bios"
-                }
-            } ?: "Internal (default)"
-
-            ImageCachePreference(
-                title = "BIOS Directory",
-                displayPath = pathDisplay,
-                hasCustomPath = bios.customBiosPath != null,
-                isFocused = uiState.focusedIndex == 1,
-                actionIndex = bios.biosPathActionIndex,
-                isMigrating = bios.isBiosMigrating,
-                onChange = { viewModel.openBiosFolderPicker() },
-                onReset = { viewModel.resetBiosToDefault() }
-            )
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(Dimens.spacingMd))
-            Text(
-                text = "PLATFORMS",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = Dimens.spacingSm)
-            )
-        }
-
-        if (bios.platformGroups.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(Dimens.spacingLg),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No BIOS files synced yet. Sync your library to discover available firmware.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        } else {
-            itemsIndexed(bios.platformGroups) { index, group ->
-                val baseFocusIndex = 2 + index + focusMapping.getExpandedItemsBefore(index)
-                val isExpanded = bios.expandedPlatformIndex == index
-
-                val itemFocused = uiState.focusedIndex == baseFocusIndex
-                BiosPlatformItem(
-                    group = group,
-                    isFocused = itemFocused,
-                    isExpanded = isExpanded,
-                    subFocusIndex = if (itemFocused) bios.platformSubFocusIndex else 0,
-                    onClick = { viewModel.toggleBiosPlatformExpanded(index) },
-                    onDownload = { viewModel.downloadBiosForPlatform(group.platformSlug) }
+        items(visibleItems.size, key = { visibleItems[it].key }) { index ->
+            val item = visibleItems[index]
+            when (item) {
+                BiosItem.Summary -> BiosSummaryCard(
+                    totalFiles = bios.totalFiles,
+                    downloadedFiles = bios.downloadedFiles,
+                    isDownloading = bios.isDownloading,
+                    downloadingFileName = bios.downloadingFileName,
+                    downloadProgress = bios.downloadProgress,
+                    isDistributing = bios.isDistributing,
+                    isFocused = isFocused(item),
+                    actionIndex = bios.actionIndex,
+                    onDownloadAll = { viewModel.downloadAllBios() },
+                    onDistributeAll = { viewModel.distributeAllBios() }
                 )
 
-                if (isExpanded) {
-                    group.firmwareItems.forEachIndexed { fileIndex, firmware ->
-                        val fileFocusIndex = baseFocusIndex + 1 + fileIndex
-                        ExpandedChildItem(
-                            title = firmware.fileName,
-                            value = if (firmware.isDownloaded) "Downloaded" else formatFileSize(firmware.fileSizeBytes),
-                            isFocused = uiState.focusedIndex == fileFocusIndex,
-                            onClick = {
-                                if (!firmware.isDownloaded) {
-                                    viewModel.downloadSingleBios(firmware.rommId)
-                                }
-                            }
+                BiosItem.BiosPath -> {
+                    val pathDisplay = bios.customBiosPath?.let { path ->
+                        val folderName = path.substringAfterLast("/")
+                        if (folderName.equals("bios", ignoreCase = true)) {
+                            folderName
+                        } else {
+                            "$folderName/bios"
+                        }
+                    } ?: "Internal (default)"
+
+                    ImageCachePreference(
+                        title = "BIOS Directory",
+                        displayPath = pathDisplay,
+                        hasCustomPath = bios.customBiosPath != null,
+                        isFocused = isFocused(item),
+                        actionIndex = bios.biosPathActionIndex,
+                        isMigrating = bios.isBiosMigrating,
+                        onChange = { viewModel.openBiosFolderPicker() },
+                        onReset = { viewModel.resetBiosToDefault() }
+                    )
+                }
+
+                BiosItem.PlatformsHeader -> {
+                    Spacer(modifier = Modifier.height(Dimens.spacingMd))
+                    Text(
+                        text = "PLATFORMS",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = Dimens.spacingSm)
+                    )
+                }
+
+                BiosItem.EmptyNotice -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(Dimens.spacingLg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No BIOS files synced yet. Sync your library to discover available firmware.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-            }
-        }
 
-        item {
-            Spacer(modifier = Modifier.height(Dimens.spacingMd))
-            Text(
-                text = "BIOS files are downloaded from your RomM server and stored locally. " +
-                    "Use 'Distribute' to copy them to emulator directories.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                modifier = Modifier.padding(horizontal = Dimens.spacingSm)
-            )
+                is BiosItem.Platform -> {
+                    val isExpanded = bios.expandedPlatformIndex == item.index
+                    val itemFocused = isFocused(item)
+                    BiosPlatformItem(
+                        group = item.group,
+                        isFocused = itemFocused,
+                        isExpanded = isExpanded,
+                        subFocusIndex = if (itemFocused) bios.platformSubFocusIndex else 0,
+                        onClick = { viewModel.toggleBiosPlatformExpanded(item.index) },
+                        onDownload = { viewModel.downloadBiosForPlatform(item.group.platformSlug) }
+                    )
+                }
+
+                is BiosItem.FirmwareFile -> {
+                    ExpandedChildItem(
+                        title = item.firmware.fileName,
+                        value = if (item.firmware.isDownloaded) "Downloaded" else formatFileSize(item.firmware.fileSizeBytes),
+                        isFocused = isFocused(item),
+                        onClick = {
+                            if (!item.firmware.isDownloaded) {
+                                viewModel.downloadSingleBios(item.firmware.rommId)
+                            }
+                        }
+                    )
+                }
+
+                BiosItem.FooterNote -> {
+                    Spacer(modifier = Modifier.height(Dimens.spacingMd))
+                    Text(
+                        text = "BIOS files are downloaded from your RomM server and stored locally. " +
+                            "Use 'Distribute' to copy them to emulator directories.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(horizontal = Dimens.spacingSm)
+                    )
+                }
+            }
         }
     }
 
@@ -249,7 +322,8 @@ private fun DistributeResultModal(
                 modifier = Modifier.heightIn(max = Dimens.headerHeightLg + Dimens.headerHeightLg + Dimens.iconSm),
                 verticalArrangement = Arrangement.spacedBy(Dimens.spacingSm)
             ) {
-                itemsIndexed(results) { _, emulator ->
+                items(results.size) { index ->
+                    val emulator = results[index]
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -709,68 +783,3 @@ private fun BiosPlatformItem(
     }
 }
 
-private data class BiosFocusMapping(
-    val platformGroups: List<BiosPlatformGroup>,
-    val expandedIndex: Int
-) {
-    fun getExpandedItemsBefore(platformIndex: Int): Int {
-        if (expandedIndex < 0 || expandedIndex >= platformIndex) return 0
-        return platformGroups.getOrNull(expandedIndex)?.firmwareItems?.size ?: 0
-    }
-
-    fun getMaxFocusIndex(): Int {
-        val expandedItemCount = platformGroups.getOrNull(expandedIndex)?.firmwareItems?.size ?: 0
-        return 1 + platformGroups.size + expandedItemCount
-    }
-
-    fun getPlatformListItemCount(): Int {
-        val expandedItemCount = platformGroups.getOrNull(expandedIndex)?.firmwareItems?.size ?: 0
-        return platformGroups.size + expandedItemCount
-    }
-
-    fun focusToScrollIndex(focusIndex: Int): Int {
-        return when {
-            focusIndex == 0 -> 0
-            focusIndex == 1 -> 1
-            else -> {
-                val baseIndex = 3
-                var scrollIndex = baseIndex
-                var currentFocus = 2
-
-                for ((index, group) in platformGroups.withIndex()) {
-                    if (currentFocus == focusIndex) return scrollIndex
-
-                    scrollIndex++
-                    currentFocus++
-
-                    if (index == expandedIndex) {
-                        for (i in group.firmwareItems.indices) {
-                            if (currentFocus == focusIndex) return scrollIndex
-                            scrollIndex++
-                            currentFocus++
-                        }
-                    }
-                }
-                scrollIndex
-            }
-        }
-    }
-}
-
-private fun buildBiosFocusMapping(
-    platformGroups: List<BiosPlatformGroup>,
-    expandedIndex: Int
-): BiosFocusMapping = BiosFocusMapping(platformGroups, expandedIndex)
-
-internal fun biosSections(
-    platformGroups: List<BiosPlatformGroup>,
-    expandedIndex: Int
-): List<ListSection> {
-    val focusMapping = buildBiosFocusMapping(platformGroups, expandedIndex)
-    val maxPlatformFocusIndex = focusMapping.getMaxFocusIndex()
-    val platformListItemCount = focusMapping.getPlatformListItemCount()
-    return listOf(
-        ListSection(listStartIndex = 0, listEndIndex = 1, focusStartIndex = 0, focusEndIndex = 1),
-        ListSection(listStartIndex = 2, listEndIndex = 3 + platformListItemCount, focusStartIndex = 2, focusEndIndex = maxPlatformFocusIndex)
-    )
-}

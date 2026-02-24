@@ -14,6 +14,8 @@ import com.nendo.argosy.ui.input.SoundType
 import com.nendo.argosy.ui.notification.NotificationProgress
 import com.nendo.argosy.ui.notification.NotificationType
 import com.nendo.argosy.ui.notification.showError
+import com.nendo.argosy.ui.screens.settings.sections.BiosItem
+import com.nendo.argosy.ui.screens.settings.sections.biosItemAtFocusIndex
 import com.nendo.argosy.ui.screens.settings.sections.GameDataItem
 import com.nendo.argosy.ui.screens.settings.sections.buildGameDataItemsFromState
 import com.nendo.argosy.ui.screens.settings.sections.gameDataItemAtFocusIndex
@@ -665,65 +667,16 @@ internal fun routeConfirmLauncherAction(vm: SettingsViewModel) {
     vm.steamDelegate.confirmLauncherAction(vm.context, vm.viewModelScope, launcherIndex)
 }
 
-// --- Bios focus mapping ---
-
-internal class BiosFocusMappingHelper(
-    private val platformGroups: List<BiosPlatformGroup>,
-    private val expandedIndex: Int
-) {
-    fun getPlatformAndChildInfo(focusIndex: Int): Pair<Int, Boolean> {
-        if (focusIndex < 2) return -1 to false
-
-        var currentFocus = 2
-        for ((index, group) in platformGroups.withIndex()) {
-            if (currentFocus == focusIndex) return index to false
-            currentFocus++
-
-            if (index == expandedIndex) {
-                for (i in group.firmwareItems.indices) {
-                    if (currentFocus == focusIndex) return index to true
-                    currentFocus++
-                }
-            }
-        }
-        return -1 to false
-    }
-
-    fun getChildIndex(focusIndex: Int, platformIndex: Int): Int {
-        if (platformIndex != expandedIndex) return -1
-
-        var currentFocus = 2
-        for ((index, group) in platformGroups.withIndex()) {
-            currentFocus++
-            if (index == expandedIndex) {
-                for (i in group.firmwareItems.indices) {
-                    if (currentFocus == focusIndex) return i
-                    currentFocus++
-                }
-            }
-        }
-        return -1
-    }
-}
-
-internal fun routeBuildBiosFocusMapping(
-    platformGroups: List<BiosPlatformGroup>,
-    expandedIndex: Int
-): BiosFocusMappingHelper = BiosFocusMappingHelper(platformGroups, expandedIndex)
+// --- Bios focus helpers ---
 
 internal fun routeMoveBiosPlatformSubFocus(vm: SettingsViewModel, delta: Int): Boolean {
     val state = vm._uiState.value
-    val focusIndex = state.focusedIndex
-    if (focusIndex < 2) return false
-
     val bios = state.bios
-    val focusMapping = routeBuildBiosFocusMapping(bios.platformGroups, bios.expandedPlatformIndex)
-    val (platformIndex, isChildItem) = focusMapping.getPlatformAndChildInfo(focusIndex)
+    val item = biosItemAtFocusIndex(state.focusedIndex, bios.platformGroups, bios.expandedPlatformIndex)
 
-    if (isChildItem || platformIndex < 0 || platformIndex >= bios.platformGroups.size) return false
+    if (item !is BiosItem.Platform) return false
 
-    val group = bios.platformGroups[platformIndex]
-    return vm.biosDelegate.movePlatformSubFocus(delta, !group.isComplete)
+    return vm.biosDelegate.movePlatformSubFocus(delta, !item.group.isComplete)
 }
 
 internal fun routeMoveBiosPathActionFocus(vm: SettingsViewModel, delta: Int): Boolean {

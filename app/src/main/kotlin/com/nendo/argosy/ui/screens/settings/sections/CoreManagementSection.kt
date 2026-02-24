@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,6 +27,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,7 +38,55 @@ import com.nendo.argosy.ui.screens.settings.CoreChipState
 import com.nendo.argosy.ui.screens.settings.PlatformCoreRow
 import com.nendo.argosy.ui.screens.settings.SettingsUiState
 import com.nendo.argosy.ui.screens.settings.SettingsViewModel
+import com.nendo.argosy.ui.screens.settings.menu.SettingsLayout
 import com.nendo.argosy.ui.theme.Dimens
+
+internal sealed class CoreManagementItem(val key: String) {
+    val isFocusable: Boolean get() = this is Platform
+
+    data object Header : CoreManagementItem("header")
+    data class Platform(val row: PlatformCoreRow) : CoreManagementItem(row.platformSlug)
+}
+
+private fun buildCoreManagementItems(platforms: List<PlatformCoreRow>): List<CoreManagementItem> =
+    buildList {
+        add(CoreManagementItem.Header)
+        for (platform in platforms) {
+            add(CoreManagementItem.Platform(platform))
+        }
+    }
+
+private fun createCoreManagementLayout(items: List<CoreManagementItem>) =
+    SettingsLayout<CoreManagementItem, Unit>(
+        allItems = items,
+        isFocusable = { it.isFocusable },
+        visibleWhen = { _, _ -> true }
+    )
+
+internal data class CoreManagementLayoutInfo(
+    val layout: SettingsLayout<CoreManagementItem, Unit>,
+    val items: List<CoreManagementItem>
+)
+
+internal fun createCoreManagementLayoutInfo(
+    platforms: List<PlatformCoreRow>
+): CoreManagementLayoutInfo {
+    val items = buildCoreManagementItems(platforms)
+    return CoreManagementLayoutInfo(createCoreManagementLayout(items), items)
+}
+
+internal fun coreManagementMaxFocusIndex(platforms: List<PlatformCoreRow>): Int {
+    val items = buildCoreManagementItems(platforms)
+    return createCoreManagementLayout(items).maxFocusIndex(Unit)
+}
+
+internal fun coreManagementItemAtFocusIndex(
+    index: Int,
+    platforms: List<PlatformCoreRow>
+): CoreManagementItem? {
+    val items = buildCoreManagementItems(platforms)
+    return createCoreManagementLayout(items).itemAtFocusIndex(index, Unit)
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -49,9 +97,13 @@ fun CoreManagementSection(
     val listState = rememberLazyListState()
     val coreState = uiState.coreManagement
 
+    val layoutInfo = remember(coreState.platforms) {
+        createCoreManagementLayoutInfo(coreState.platforms)
+    }
+
     FocusedScroll(
         listState = listState,
-        focusedIndex = coreState.focusedPlatformIndex + 1 // +1 for header item
+        focusedIndex = layoutInfo.layout.focusToListIndex(coreState.focusedPlatformIndex, Unit)
     )
 
     if (coreState.platforms.isEmpty()) {
@@ -68,6 +120,8 @@ fun CoreManagementSection(
         return
     }
 
+    val visibleItems = remember(layoutInfo) { layoutInfo.layout.visibleItems(Unit) }
+
     LazyColumn(
         state = listState,
         modifier = Modifier
@@ -75,29 +129,30 @@ fun CoreManagementSection(
             .padding(Dimens.spacingMd),
         verticalArrangement = Arrangement.spacedBy(Dimens.spacingMd)
     ) {
-        item(key = "header") {
-            Text(
-                text = "Select cores for each platform",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = Dimens.spacingSm)
-            )
-        }
+        items(visibleItems.size, key = { visibleItems[it].key }) { index ->
+            when (val item = visibleItems[index]) {
+                CoreManagementItem.Header -> {
+                    Text(
+                        text = "Select cores for each platform",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = Dimens.spacingSm)
+                    )
+                }
+                is CoreManagementItem.Platform -> {
+                    val platformFocusIndex = layoutInfo.layout.focusIndexOf(item, Unit)
+                    val isPlatformFocused = platformFocusIndex == coreState.focusedPlatformIndex
 
-        itemsIndexed(
-            items = coreState.platforms,
-            key = { _, platform -> platform.platformSlug }
-        ) { platformIndex, platform ->
-            val isPlatformFocused = platformIndex == coreState.focusedPlatformIndex
-
-            PlatformCoreRowItem(
-                platform = platform,
-                isPlatformFocused = isPlatformFocused,
-                focusedCoreIndex = if (isPlatformFocused) coreState.focusedCoreIndex else platform.activeCoreIndex,
-                isOnline = coreState.isOnline,
-                downloadingCoreId = coreState.downloadingCoreId,
-                onCoreClick = { viewModel.selectCoreForPlatform() }
-            )
+                    PlatformCoreRowItem(
+                        platform = item.row,
+                        isPlatformFocused = isPlatformFocused,
+                        focusedCoreIndex = if (isPlatformFocused) coreState.focusedCoreIndex else item.row.activeCoreIndex,
+                        isOnline = coreState.isOnline,
+                        downloadingCoreId = coreState.downloadingCoreId,
+                        onCoreClick = { viewModel.selectCoreForPlatform() }
+                    )
+                }
+            }
         }
     }
 }
