@@ -68,4 +68,4 @@ pyinstaller --noconsole --onefile --name Wingosy --icon "icon.png" --add-data "i
 
 ## License
 
-MIT License. See `LICENSE` for details.
+GPLv3 License. See `LICENSE` for details.
