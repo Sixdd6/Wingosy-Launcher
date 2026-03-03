@@ -45,7 +45,7 @@ class SetupDialog(QDialog):
         layout = QFormLayout(self)
         self.host_input = QLineEdit(self.config.get("host"))
         self.user_input = QLineEdit(self.config.get("username"))
-        self.pass_input = QLineEdit(self.config.get("password"))
+        self.pass_input = QLineEdit("") # Do not load from config
         self.pass_input.setEchoMode(QLineEdit.Password)
         layout.addRow("RomM Host:", self.host_input)
         layout.addRow("Username:", self.user_input)
@@ -82,7 +82,7 @@ class UpdaterThread(QThread):
                 self.finished.emit(True, latest_version, download_url)
             else:
                 self.finished.emit(False, latest_version, "")
-        except:
+        except Exception:
             self.finished.emit(False, "", "")
 
 class SettingsDialog(QDialog):
@@ -156,14 +156,14 @@ class SettingsDialog(QDialog):
             self.upgrade_btn.setText(f"Upgrade to v{version}")
             self.upgrade_btn.setVisible(True)
             try: self.upgrade_btn.clicked.disconnect()
-            except: pass
+            except Exception: pass
             self.upgrade_btn.clicked.connect(lambda: webbrowser.open(url))
         else:
             QMessageBox.information(self, "No Updates", "You are running the latest version.")
 
     def do_logout(self):
         self.config.set("token", None)
-        self.config.set("password", "")
+        self.config.set("password", None)
         QMessageBox.information(self, "Logged Out", "You have been logged out. Restart to log in.")
         QApplication.instance().quit()
 
@@ -180,7 +180,7 @@ class ImageFetcher(QThread):
                 img = QImage()
                 if img.loadFromData(r.content):
                     self.finished.emit(self.game_id, QPixmap.fromImage(img))
-        except:
+        except Exception:
             pass
 
 class BaseDownloader(QThread):
@@ -189,7 +189,6 @@ class BaseDownloader(QThread):
     
     def __init__(self):
         super().__init__()
-        self.is_cancelled = [False]
 
     def perform_download(self, url, target_dir):
         try:
@@ -204,9 +203,10 @@ class BaseDownloader(QThread):
             start = time.time()
             with open(target_path, 'wb') as f:
                 for chunk in r.iter_content(1024*1024):
-                    if self.is_cancelled[0]:
+                    if self.isInterruptionRequested():
                         f.close()
-                        os.remove(target_path)
+                        try: os.remove(target_path)
+                        except Exception: pass
                         return False, "Cancelled"
                     if chunk:
                         f.write(chunk)
@@ -215,7 +215,6 @@ class BaseDownloader(QThread):
                         speed = downloaded / elapsed if elapsed > 0 else 0
                         self.progress.emit(int((downloaded / total) * 100) if total > 0 else 0, speed)
             
-            # Extraction logic
             return self.extract_archive(target_path, target_dir)
         except Exception as e:
             return False, str(e)
@@ -225,7 +224,8 @@ class BaseDownloader(QThread):
             if file_path.endswith('.zip'):
                 with zipfile.ZipFile(file_path, 'r') as z:
                     z.extractall(dest_dir)
-                os.remove(file_path)
+                try: os.remove(file_path)
+                except Exception: pass
                 return True, dest_dir
             elif file_path.endswith('.7z'):
                 extracted = False
@@ -234,17 +234,17 @@ class BaseDownloader(QThread):
                         with py7zr.SevenZipFile(file_path, mode='r') as z:
                             z.extractall(path=dest_dir)
                         extracted = True
-                    except: pass
+                    except Exception: pass
                 
                 if not extracted:
-                    # Try system tar
                     try:
                         subprocess.run(['tar', '-xf', file_path, '-C', dest_dir], check=True)
                         extracted = True
-                    except: pass
+                    except Exception: pass
                 
                 if extracted:
-                    os.remove(file_path)
+                    try: os.remove(file_path)
+                    except Exception: pass
                     return True, dest_dir
                 else:
                     return True, file_path + " (Download complete, but extraction failed. Please extract manually.)"
@@ -268,7 +268,7 @@ class DolphinDownloader(BaseDownloader):
     def run(self):
         try:
             api_url = "https://dolphin-emu.org/download/list/master/1/?format=json"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            headers = {'User-Agent': 'Mozilla/5.0'}
             resp = requests.get(api_url, timeout=15, headers=headers)
             if resp.status_code != 200:
                 download_url = "https://dl.dolphin-emu.org/releases/2512/dolphin-2512-x64.7z"
@@ -278,7 +278,7 @@ class DolphinDownloader(BaseDownloader):
             
             ok, msg = self.perform_download(download_url, self.target_dir)
             self.finished.emit(ok, msg)
-        except Exception as e:
+        except Exception:
             download_url = "https://dl.dolphin-emu.org/releases/2512/dolphin-2512-x64.7z"
             ok, msg = self.perform_download(download_url, self.target_dir)
             self.finished.emit(ok, msg)
@@ -339,11 +339,10 @@ class RomDownloader(QThread):
         self.rom_id = rom_id
         self.file_name = file_name
         self.target_path = target_path
-        self.is_cancelled = [False]
     def run(self):
         def cb(d, t, s):
-            self.progress.emit(int((d / t) * 100), s)
-        success = self.client.download_rom(self.rom_id, self.file_name, self.target_path, cb, self.is_cancelled)
+            self.progress.emit(int((d / t) * 100) if t > 0 else 0, s)
+        success = self.client.download_rom(self.rom_id, self.file_name, self.target_path, cb, thread=self)
         self.finished.emit(success, self.target_path)
 
 class BiosDownloader(QThread):
@@ -360,9 +359,9 @@ class BiosDownloader(QThread):
         
         success = False
         if self.fw.get('is_rom'):
-            success = self.client.download_rom(self.fw['id'], self.fw['file_name'], self.target_path, cb)
+            success = self.client.download_rom(self.fw['id'], self.fw['file_name'], self.target_path, cb, thread=self)
         else:
-            success = self.client.download_firmware(self.fw, self.target_path, cb)
+            success = self.client.download_firmware(self.fw, self.target_path, cb, thread=self)
         
         if success and self.target_path.endswith(('.zip', '.7z')):
             try:
@@ -370,12 +369,14 @@ class BiosDownloader(QThread):
                 if self.target_path.endswith('.zip'):
                     with zipfile.ZipFile(self.target_path, 'r') as z:
                         z.extractall(dest)
-                    os.remove(self.target_path)
+                    try: os.remove(self.target_path)
+                    except Exception: pass
                 elif self.target_path.endswith('.7z') and HAS_PY7ZR:
                     with py7zr.SevenZipFile(self.target_path, mode='r') as z:
                         z.extractall(path=dest)
-                    os.remove(self.target_path)
-            except:
+                    try: os.remove(self.target_path)
+                    except Exception: pass
+            except Exception:
                 pass
         self.finished.emit(success, self.target_path)
 
@@ -430,7 +431,6 @@ class GameDetailDialog(QDialog):
         dt.addWidget(QLabel(f"<h2>{game.get('name')}</h2>"))
         dt.addWidget(QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}"))
         
-        # PLAY BUTTON
         self.play_btn = QPushButton("▶ PLAY")
         self.play_btn.setStyleSheet("background: #1e88e5; color: white; font-weight: bold; padding: 10px; font-size: 14pt;")
         self.play_btn.clicked.connect(self.play_game)
@@ -466,7 +466,6 @@ class GameDetailDialog(QDialog):
         base_rom = self.config.get("base_rom_path")
         rom_name = self.game.get('fs_name')
         
-        # Robust ROM search
         local_rom = Path(base_rom) / platform / rom_name
         if not local_rom.exists():
             local_rom = Path(base_rom) / rom_name
@@ -483,8 +482,6 @@ class GameDetailDialog(QDialog):
 
         emu_data = None
         emu_display_name = None
-        
-        # Check for preferred emulator
         preferred = self.config.get("preferred_emulators", {}).get(platform)
         if preferred:
             data = self.config.get("emulators").get(preferred)
@@ -492,10 +489,9 @@ class GameDetailDialog(QDialog):
                 emu_data = data
                 emu_display_name = preferred
         
-        # Fallback to first available emulator for platform
         if not emu_data:
             for name, data in self.config.get("emulators").items():
-                if data.get("platform_slug") == platform or (platform in ["gc", "wii"] and name == "GameCube / Wii"):
+                if data.get("platform_slug") == platform or (platform in ["gc", "wii", "ngc"] and name == "GameCube / Wii"):
                     if data.get("path") and os.path.exists(data.get("path")):
                         emu_data = data
                         emu_display_name = name
@@ -509,20 +505,18 @@ class GameDetailDialog(QDialog):
         if not self.main_window.watcher:
             self.main_window.toggle_tr()
         
-        # Resolve path using the standardized display name
-        save_path = self.main_window.watcher.resolve_save_path(emu_display_name, self.game.get('name'), str(local_rom), emu_data.get('path'))
-        if save_path:
-            self.main_window.watcher.skip_next_pull_rom_id = str(self.game['id'])
-            is_folder = os.path.isdir(save_path) if os.path.exists(save_path) else False
-            # Force pull from server regardless of cache in Play mode
-            self.main_window.watcher.pull_server_save(self.game['id'], self.game.get('name'), save_path, is_folder, force=True)
-        
         try:
             args = [emu_data['path'], str(local_rom)]
-            subprocess.Popen(args)
-            self.main_window.log(f"🚀 Launched {emu_data['exe']} with {rom_name}")
+            proc = subprocess.Popen(args)
+            self.main_window.log(f"🚀 Launched {emu_data['exe']} with {rom_name} (PID: {proc.pid})")
+            
+            # Pass Popen object to watcher for specific process tracking
+            if self.main_window.watcher:
+                self.main_window.watcher.track_session(proc, emu_display_name, self.game, str(local_rom), emu_data['path'])
+            
             self.accept()
         except Exception as e:
+            self.main_window.log(f"❌ Launch Error: {e}")
             QMessageBox.critical(self, "Launch Error", str(e))
 
     def download_rom(self, fd):
@@ -541,7 +535,7 @@ class GameDetailDialog(QDialog):
 
     def cancel_dl(self):
         if self.dl_thread:
-            self.dl_thread.is_cancelled[0] = True
+            self.dl_thread.requestInterruption()
             self.on_download_complete(False, "Cancelled")
 
     def on_download_complete(self, ok, p):
@@ -552,7 +546,7 @@ class GameDetailDialog(QDialog):
         if ok:
             QMessageBox.information(self, "Success", f"Downloaded to {p}")
         elif p != "Cancelled":
-            QMessageBox.critical(self, "Error", "Download failed.")
+            QMessageBox.critical(self, "Error", f"Download failed: {p}")
 
 class WingosyMainWindow(QMainWindow):
     def __init__(self, config_manager, client, watcher_class, version):
@@ -564,15 +558,13 @@ class WingosyMainWindow(QMainWindow):
         self.setWindowTitle("Wingosy Launcher")
         self.resize(1100, 800)
         
-        # Set Application Icon
         icon_path = get_resource_path("icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             
         self.setup_ui()
         self.setup_tray()
-        # Enable tracking by default on startup
-        self.toggle_tr()
+        self.ensure_watcher_running()
 
     def setup_ui(self):
         c = QWidget()
@@ -581,17 +573,13 @@ class WingosyMainWindow(QMainWindow):
         h = QHBoxLayout()
         h.addWidget(QLabel("<h1 style='color: #1e88e5;'>Wingosy Launcher</h1>"))
         h.addStretch()
-        self.tr_btn = QPushButton("START TRACKING")
-        self.tr_btn.setFixedSize(150, 35)
-        self.tr_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold;")
-        self.tr_btn.clicked.connect(self.toggle_tr)
-        h.addWidget(self.tr_btn)
+        # The watcher now starts automatically and handles process-specific tracking.
+        # No manual "Start Tracking" button needed.
         self.st_btn = QPushButton("⚙️ Settings")
         self.st_btn.clicked.connect(self.open_st)
         h.addWidget(self.st_btn)
         l.addLayout(h)
         
-        # Library Filtering UI
         filter_l = QHBoxLayout()
         filter_l.addWidget(QLabel("Search:"))
         self.search_in = QLineEdit()
@@ -662,13 +650,7 @@ class WingosyMainWindow(QMainWindow):
     def apply_filters(self):
         txt = self.search_in.text().lower()
         plat = self.plat_filter.currentText()
-        
-        filtered = []
-        for g in self.all_games:
-            name_match = txt in g.get('name', '').lower() or txt in g.get('fs_name', '').lower()
-            plat_match = plat == "All Platforms" or g.get('platform_display_name') == plat
-            if name_match and plat_match:
-                filtered.append(g)
+        filtered = [g for g in self.all_games if (txt in g.get('name', '').lower() or txt in g.get('fs_name', '').lower()) and (plat == "All Platforms" or g.get('platform_display_name') == plat)]
         self.populate_grid(filtered)
 
     def br_d(self, k, le):
@@ -683,14 +665,17 @@ class WingosyMainWindow(QMainWindow):
         self.log("✅ Paths saved.")
     
     def pop_lib(self):
-        self.all_games = self.client.fetch_library()
-        plats = sorted(list(set(g.get('platform_display_name') for g in self.all_games if g.get('platform_display_name'))))
-        self.plat_filter.blockSignals(True)
-        self.plat_filter.clear()
-        self.plat_filter.addItem("All Platforms")
-        self.plat_filter.addItems(plats)
-        self.plat_filter.blockSignals(False)
-        self.populate_grid(self.all_games)
+        try:
+            self.all_games = self.client.fetch_library()
+            plats = sorted(list(set(g.get('platform_display_name') for g in self.all_games if g.get('platform_display_name'))))
+            self.plat_filter.blockSignals(True)
+            self.plat_filter.clear()
+            self.plat_filter.addItem("All Platforms")
+            self.plat_filter.addItems(plats)
+            self.plat_filter.blockSignals(False)
+            self.populate_grid(self.all_games)
+        except Exception as e:
+            self.log(f"❌ Error fetching library: {e}")
 
     def populate_grid(self, games):
         for i in reversed(range(self.gl.count())):
@@ -743,7 +728,6 @@ class WingosyMainWindow(QMainWindow):
             btn_im = QPushButton("📥 Import")
             btn_im.clicked.connect(lambda checked, name=n: self.sy_ec(name, "import"))
             rl.addWidget(btn_im)
-            
             self.emu_list_layout.addWidget(row)
 
     def open_fw(self, emu_name):
@@ -787,8 +771,7 @@ class WingosyMainWindow(QMainWindow):
             platforms = {}
             for f in matches:
                 p = f.get('platform_name', 'Other')
-                if p not in platforms:
-                    platforms[p] = []
+                if p not in platforms: platforms[p] = []
                 platforms[p].append(f)
             for p_name, files in platforms.items():
                 if len(files) > 1:
@@ -820,53 +803,49 @@ class WingosyMainWindow(QMainWindow):
     def dl_fw_list(self, emu, fw_list, dlg):
         count = 0
         for fw in fw_list:
-            if self.start_fw_download(emu, fw):
-                count += 1
+            if self.start_fw_download(emu, fw): count += 1
         self.log(f"✨ BIOS Sync: {count} downloads started.")
         dlg.accept()
 
     def dl_fw(self, emu, fw, dlg):
-        if self.start_fw_download(emu, fw):
-            dlg.accept()
+        if self.start_fw_download(emu, fw): dlg.accept()
 
     def start_fw_download(self, emu, fw):
-        emu_path = self.config.get("emulators")[emu].get("path")
-        emu_folder = self.config.get("emulators")[emu].get("folder", emu)
-        suggested = Path(emu_path).parent / "bios" if emu_path else Path(self.config.get("base_emu_path")) / emu_folder / "bios"
-        os.makedirs(suggested, exist_ok=True)
-        tp = suggested / fw['file_name']
-        self.log(f"🚀 BIOS: {fw['file_name']}...")
-        fw_dl = BiosDownloader(self.client, fw, str(tp))
-        fw_dl.progress.connect(lambda p, s: self.log(f"DL BIOS: {p}% @ {format_speed(s)}"))
-        fw_dl.finished.connect(lambda ok, p: self.log(f"✨ BIOS saved to {p}") if ok else self.log(f"❌ BIOS failed: {p}"))
-        fw_dl.finished.connect(lambda: self.active_threads.remove(fw_dl) if fw_dl in self.active_threads else None)
-        self.active_threads.append(fw_dl)
-        fw_dl.start()
-        return True
+        try:
+            emu_path = self.config.get("emulators")[emu].get("path")
+            emu_folder = self.config.get("emulators")[emu].get("folder", emu)
+            suggested = Path(emu_path).parent / "bios" if emu_path else Path(self.config.get("base_emu_path")) / emu_folder / "bios"
+            os.makedirs(suggested, exist_ok=True)
+            tp = suggested / fw['file_name']
+            self.log(f"🚀 BIOS: {fw['file_name']}...")
+            fw_dl = BiosDownloader(self.client, fw, str(tp))
+            fw_dl.progress.connect(lambda p, s: self.log(f"DL BIOS: {p}% @ {format_speed(s)}"))
+            fw_dl.finished.connect(lambda ok, p: self.log(f"✨ BIOS saved to {p}") if ok else self.log(f"❌ BIOS failed: {p}"))
+            fw_dl.finished.connect(lambda: self.active_threads.remove(fw_dl) if fw_dl in self.active_threads else None)
+            self.active_threads.append(fw_dl)
+            fw_dl.start()
+            return True
+        except Exception as e:
+            self.log(f"❌ Error starting BIOS download: {e}")
+            return False
 
     def dl_emu(self, n):
-        emu_data = self.config.get("emulators")[n]
-        url = emu_data.get("url")
-        repo = emu_data.get("github")
-        is_dolphin = emu_data.get("dolphin_latest", False)
-        
-        target_dir = Path(self.config.get("base_emu_path")) / emu_data.get("folder")
-        os.makedirs(target_dir, exist_ok=True)
-        self.log(f"🚀 Downloading {n}...")
-        
-        if is_dolphin:
-            dl_thread = DolphinDownloader(str(target_dir))
-        elif url:
-            dl_thread = DirectDownloader(url, str(target_dir))
-        elif repo:
-            dl_thread = GithubDownloader(repo, str(target_dir))
-        else:
-            return
-            
-        dl_thread.progress.connect(lambda p, s: self.log(f"DL {n}: {p}% @ {format_speed(s)}"))
-        dl_thread.finished.connect(lambda ok, p: self.post_dl_emu(n, ok, p, dl_thread))
-        self.active_threads.append(dl_thread)
-        dl_thread.start()
+        try:
+            emu_data = self.config.get("emulators")[n]
+            url, repo = emu_data.get("url"), emu_data.get("github")
+            target_dir = Path(self.config.get("base_emu_path")) / emu_data.get("folder")
+            os.makedirs(target_dir, exist_ok=True)
+            self.log(f"🚀 Downloading {n}...")
+            if emu_data.get("dolphin_latest", False): dl_thread = DolphinDownloader(str(target_dir))
+            elif url: dl_thread = DirectDownloader(url, str(target_dir))
+            elif repo: dl_thread = GithubDownloader(repo, str(target_dir))
+            else: return
+            dl_thread.progress.connect(lambda p, s: self.log(f"DL {n}: {p}% @ {format_speed(s)}"))
+            dl_thread.finished.connect(lambda ok, p: self.post_dl_emu(n, ok, p, dl_thread))
+            self.active_threads.append(dl_thread)
+            dl_thread.start()
+        except Exception as e:
+            self.log(f"❌ Error starting emulator download: {e}")
 
     def post_dl_emu(self, n, ok, p, thread):
         if ok:
@@ -884,16 +863,12 @@ class WingosyMainWindow(QMainWindow):
                     if trigger:
                         trigger_path = Path(root) / trigger
                         if not trigger_path.exists():
-                            if '.' in trigger:
-                                trigger_path.write_text("")
-                            else:
-                                trigger_path.mkdir(exist_ok=True)
+                            if '.' in trigger: trigger_path.write_text("")
+                            else: trigger_path.mkdir(exist_ok=True)
                             self.log(f"📁 Portable mode enabled ({trigger})")
                     break
-        else:
-            self.log(f"❌ {p}")
-        if thread in self.active_threads:
-            self.active_threads.remove(thread)
+        else: self.log(f"❌ {p}")
+        if thread in self.active_threads: self.active_threads.remove(thread)
 
     def st_ep(self, n):
         p, _ = QFileDialog.getOpenFileName(self, f"Select {n}.exe", filter="Executables (*.exe)")
@@ -917,30 +892,28 @@ class WingosyMainWindow(QMainWindow):
             self.pop_emu()
 
     def sy_ec(self, n, m):
-        d = self.config.get("emulators")[n]
-        p = d.get("config_path")
-        if not p:
-            return
-        self.log(f"🔄 {m}ing {n} config...")
-        if m == "export" and os.path.exists(p):
-            from src.utils import zip_path
-            t = f"conf_{n}.zip"
-            zip_path(p, t)
-            if self.client.upload_save(17, f"{n}-config", t)[0]:
-                self.log(f"✨ {n} config exported.")
-            if os.path.exists(t):
-                os.remove(t)
-        elif m == "import":
-            l = self.client.get_latest_save(17)
-            if l:
-                t = "dl_conf.zip"
-                if self.client.download_save(l, t):
-                    if os.path.exists(p):
-                        shutil.move(p, f"{p}.bak")
-                    with zipfile.ZipFile(t, 'r') as z:
-                        z.extractall(Path(p).parent)
-                    self.log(f"✨ {n} config restored!")
-                    os.remove(t)
+        try:
+            d = self.config.get("emulators")[n]
+            p = d.get("config_path")
+            if not p: return
+            self.log(f"🔄 {m}ing {n} config...")
+            if m == "export" and os.path.exists(p):
+                from src.utils import zip_path
+                t = f"conf_{n}.zip"
+                zip_path(p, t)
+                if self.client.upload_save(17, f"{n}-config", t)[0]: self.log(f"✨ {n} config exported.")
+                if os.path.exists(t): os.remove(t)
+            elif m == "import":
+                l = self.client.get_latest_save(17)
+                if l:
+                    t = "dl_conf.zip"
+                    if self.client.download_save(l, t):
+                        if os.path.exists(p): shutil.move(p, f"{p}.bak")
+                        with zipfile.ZipFile(t, 'r') as z: z.extractall(Path(p).parent)
+                        self.log(f"✨ {n} config restored!")
+                        os.remove(t)
+        except Exception as e:
+            self.log(f"❌ Config sync error: {e}")
 
     def log(self, m):
         self.la.append(m)
@@ -948,31 +921,16 @@ class WingosyMainWindow(QMainWindow):
     def open_st(self):
         SettingsDialog(self.config, self, self).exec()
 
-    def toggle_tr(self):
+    def ensure_watcher_running(self):
         if not self.watcher:
             self.watcher = self.watcher_class(self.client, self.config)
             self.watcher.log_signal.connect(self.log)
             self.watcher.path_detected_signal.connect(self.on_path)
             self.watcher.start()
-            self.tr_btn.setText("STOP TRACKING")
-            self.tr_btn.setStyleSheet("background: #c62828; color: white;")
-        else:
-            self.watcher.running = False
-            self.watcher.wait()
-            self.watcher = None
-            self.tr_btn.setText("START TRACKING")
-            self.tr_btn.setStyleSheet("background: #1565c0; color: white;")
 
     def setup_tray(self):
-        # Create a tray icon using the app icon if possible
         icon_path = get_resource_path("icon.png")
-        if os.path.exists(icon_path):
-            icon = QIcon(icon_path)
-        else:
-            px = QPixmap(32, 32)
-            px.fill(QColor("#1565c0"))
-            icon = QIcon(px)
-            
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon(QPixmap(32, 32))
         self.ti = QSystemTrayIcon(icon, self)
         menu = QMenu()
         menu.addAction("Show", self.showNormal)

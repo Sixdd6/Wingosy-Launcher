@@ -19,7 +19,6 @@ class WingosyWatcher(QThread):
         self.config = config_manager
         self.running = True
         self.active_sessions = {}
-        self.failed_pids = set()
         self.skip_next_pull_rom_id = None # Flag to prevent double-pull when launching from app
         
         self.cache_path = Path.home() / ".wingosy" / "sync_cache.json"
@@ -28,128 +27,89 @@ class WingosyWatcher(QThread):
             try:
                 with open(self.cache_path, 'r') as f:
                     self.sync_cache = json.load(f)
-            except:
-                pass
+            except Exception as e:
+                print(f"[Watcher] Cache load error: {e}")
 
     def save_cache(self):
         try:
             with open(self.cache_path, 'w') as f:
                 json.dump(self.sync_cache, f)
-        except:
-            pass
+        except Exception as e:
+            print(f"[Watcher] Cache save error: {e}")
 
     def run(self):
-        self.log_signal.emit("🚀 Watcher Active.")
+        self.log_signal.emit("🚀 Watcher Active (Process-Specific Mode).")
         while self.running:
-            target_emus = self.config.get("emulators", {})
-            target_exes = [cfg['exe'].lower() for cfg in target_emus.values()]
-            
-            found_pids = []
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    name = proc.info['name'].lower()
-                    if name in target_exes:
-                        pid = proc.info['pid']
-                        found_pids.append(pid)
-                        if pid not in self.active_sessions and pid not in self.failed_pids:
-                            self.handle_new_launch(pid, name, proc.info.get('cmdline', []))
-                except:
-                    continue
-
+            # Only poll processes we are explicitly tracking
             for pid, data in list(self.active_sessions.items()):
-                if pid not in found_pids:
-                    self.handle_exit(data)
+                try:
+                    # Check if process is still running
+                    if not psutil.pid_exists(pid):
+                        self.handle_exit(data)
+                        del self.active_sessions[pid]
+                    else:
+                        # Optional: periodically verify it's still the SAME process (unlikely to collide in short term)
+                        pass
+                except Exception as e:
+                    self.log_signal.emit(f"❌ Error monitoring PID {pid}: {e}")
                     del self.active_sessions[pid]
             
-            self.failed_pids = {pid for pid in self.failed_pids if pid in found_pids}
             time.sleep(2)
 
-    def handle_new_launch(self, pid, emu_exe, cmdline):
+    def track_session(self, proc, emu_display_name, game_data, local_rom_path, emu_path):
+        """
+        Explicitly track a process launched by the UI.
+        """
         try:
-            proc = psutil.Process(pid)
-            full_cmd = " ".join(cmdline).lower()
-            emu_path = proc.exe()
+            pid = proc.pid
+            full_cmd = f"\"{emu_path}\" \"{local_rom_path}\"".lower()
+            rom_id = game_data['id']
+            title = game_data['name']
+            platform = game_data.get('platform_slug')
+
+            # 1. Resolve Save Path
+            save_path = self.resolve_save_path(emu_display_name, title, full_cmd, emu_path, platform, proc=psutil.Process(pid))
             
-            # 1. Auto-detect display name
-            emu_display_name = None
-            emus = self.config.get("emulators")
-            for disp_name, data in emus.items():
-                if data['exe'].lower() == emu_exe.lower():
-                    emu_display_name = disp_name
-                    if data.get('path') != emu_path:
-                        self.log_signal.emit(f"📍 Auto-detected {disp_name} at {emu_path}")
-                        self.path_detected_signal.emit(disp_name, emu_path)
-                    break
-
-            if not emu_display_name:
-                return
-
-            # 2. Match game
-            matched_game = None
-            for game in self.client.user_games:
-                fs_name = (game.get('fs_name') or "").lower()
-                if fs_name and fs_name in full_cmd:
-                    matched_game = game
-                    break
-            
-            if not matched_game:
-                try:
-                    open_files = [f.path.lower() for f in proc.open_files()]
-                    for game in self.client.user_games:
-                        fs_name = (game.get('fs_name') or "").lower()
-                        if any(fs_name in f for f in open_files):
-                            matched_game = game
-                            break
-                except:
-                    pass
-
-            if not matched_game:
-                self.log_signal.emit(f"⚠️ Could not match ROM for {emu_display_name}.")
-                self.failed_pids.add(pid)
-                return
-
-            rom_id = matched_game['id']
-            title = matched_game['name']
-            
-            # 3. Resolve Save Path
-            save_path = self.resolve_save_path(emu_display_name, title, full_cmd, emu_path)
+            if not save_path:
+                # Retry once after a short delay in case files aren't open yet
+                time.sleep(2)
+                save_path = self.resolve_save_path(emu_display_name, title, full_cmd, emu_path, platform, proc=psutil.Process(pid))
 
             if save_path:
-                # Standardize folder detection
-                is_folder = "Switch" in emu_display_name or "rpcs3" in emu_exe.lower()
+                save_path = str(Path(save_path).resolve())
+                is_folder = platform in ["switch", "ps3", "wii"]
                 if os.path.exists(save_path):
                     is_folder = os.path.isdir(save_path)
                 
-                # Double-Pull Protection
+                # Double-Pull Protection (already handled by Play button usually, but safe to keep)
                 should_pull = self.config.get("auto_pull_saves", True)
                 if self.skip_next_pull_rom_id == str(rom_id):
-                    self.log_signal.emit(f"⚡ Skipping initial pull for {title} (already handled).")
-                    self.skip_next_pull_rom_id = None
                     should_pull = False
+                    self.skip_next_pull_rom_id = None
 
                 if should_pull:
                     self.pull_server_save(rom_id, title, save_path, is_folder)
                 
-                # Track the session
+                # Track the session with hash BEFORE playing
                 h = None
                 if os.path.exists(save_path):
-                    h = calculate_folder_hash(save_path) if is_folder else calculate_file_hash(save_path)
+                    try: h = calculate_folder_hash(save_path) if is_folder else calculate_file_hash(save_path)
+                    except Exception: pass
 
                 self.active_sessions[pid] = {
                     'emu': emu_display_name, 
                     'rom_id': rom_id, 
-                    'save_path': str(save_path),
+                    'save_path': save_path,
                     'title': title,
                     'initial_hash': h,
                     'is_folder': is_folder
                 }
-                self.log_signal.emit(f"🎮 Tracking {title} on {emu_display_name}")
+                self.log_signal.emit(f"🎮 Tracking {title} on {emu_display_name} (PID: {pid})")
             else:
                 self.log_signal.emit(f"⚠️ Identified {title} but could not resolve local save path.")
-                self.failed_pids.add(pid)
                 
         except Exception as e:
-            self.log_signal.emit(f"❌ Error in launch: {e}")
+            self.log_signal.emit(f"❌ Error setting up tracking: {e}")
 
     def pull_server_save(self, rom_id, title, local_path, is_folder, force=False):
         self.log_signal.emit(f"☁️ Checking cloud for {title}...")
@@ -192,14 +152,18 @@ class WingosyWatcher(QThread):
                 bak_path = str(local_path) + ".bak"
                 if os.path.exists(bak_path):
                     if os.path.isdir(bak_path):
-                        shutil.rmtree(bak_path)
+                        shutil.rmtree(bak_path, ignore_errors=True)
                     else:
-                        os.remove(bak_path)
+                        try: os.remove(bak_path)
+                        except Exception: pass
                 
-                if is_folder:
-                    shutil.copytree(local_path, bak_path)
-                else:
-                    shutil.copy2(local_path, bak_path)
+                try:
+                    if is_folder:
+                        shutil.copytree(local_path, bak_path)
+                    else:
+                        shutil.copy2(local_path, bak_path)
+                except Exception as e:
+                    self.log_signal.emit(f"⚠️ Backup failed: {e}")
 
             # Apply
             try:
@@ -211,7 +175,7 @@ class WingosyWatcher(QThread):
                         with zipfile.ZipFile(temp_dl, 'r') as z:
                             target_member = None
                             for name in z.namelist():
-                                if name.endswith(('.ps2', '.srm', '.sav', '.dat', '.sv')):
+                                if name.endswith(('.ps2', '.srm', '.sav', '.dat', '.sv', '.raw', '.gci')):
                                     target_member = name
                                     break
                             
@@ -235,112 +199,171 @@ class WingosyWatcher(QThread):
             if os.path.exists(temp_dl):
                 os.remove(temp_dl)
 
-    def resolve_save_path(self, emu_display_name, title, full_cmd, emu_path):
-        emu_dir = Path(emu_path).parent
-        
-        if "Switch" in emu_display_name:
-            # 1. Known Title ID Mapping
-            title_id = None
-            t_lower = title.lower()
-            if "monster hunter rise" in t_lower:
-                title_id = "0100B04011422000"
-            elif "monster hunter generations" in t_lower or "mhgu" in t_lower:
-                title_id = "0100770008DD8000"
-            elif "tears of the kingdom" in t_lower or "totk" in t_lower:
-                title_id = "0100F2C0115B6000"
-            elif "breath of the wild" in t_lower or "botw" in t_lower:
-                title_id = "01007EF00011E000"
-            
-            # 2. Extract from command line if not hardcoded
-            if not title_id:
-                m = re.search(r'01[0-9a-f]{14}', full_cmd)
-                if m:
-                    title_id = m.group(0).upper()
-            
-            if title_id:
-                search_roots = [
-                    emu_dir / "user",
-                    emu_dir / "data",
-                    Path(os.path.expandvars(r'%APPDATA%\yuzu')),
-                    Path(os.path.expandvars(r'%APPDATA%\eden')),
-                    Path(os.path.expandvars(r'%APPDATA%\sudachi')),
-                    Path(os.path.expandvars(r'%APPDATA%\ryujinx'))
-                ]
-                
-                # 3. Profile Detection Logic
-                for root in search_roots:
-                    if not root.exists():
-                        continue
-                    
-                    # Search for existing save folders first (Deep Search)
-                    for p in root.rglob(title_id):
-                        if p.is_dir() and "save" in str(p).lower():
-                            return p
-                    
-                    # If not found, try to find the actual User Profile folder
-                    save_base = root / "nand/user/save"
-                    if save_base.exists():
-                        profiles = [d for d in save_base.iterdir() if d.is_dir() and d.name != "0000000000000000"]
-                        if profiles:
-                            profile_id = profiles[0].name
-                            return save_base / "0000000000000000" / profile_id / title_id
-                
-                # 4. Final Fallback
-                for root in search_roots:
-                    if root.exists():
-                        return root / "nand/user/save/0000000000000000/0000000000000000" / title_id
-        
-        elif "PlayStation 2" in emu_display_name:
-            search_paths = [
-                emu_dir / "memcards" / "Mcd001.ps2",
-                emu_dir / "memcards" / "Mcd000.ps2",
-                emu_dir / "user" / "memcards" / "Mcd001.ps2",
-                Path(os.path.expandvars(r'%APPDATA%\PCSX2\memcards\Mcd001.ps2')),
-                Path.home() / "Documents" / "PCSX2" / "memcards" / "Mcd001.ps2"
-            ]
-            for p in search_paths:
-                if p.exists():
-                    return p
-            return search_paths[0]
+    def get_game_id_from_rom(self, full_cmd):
+        """Extracts GameID from the ROM header directly (GC/Wii)."""
+        try:
+            m = re.search(r'("[^"]+\.(?:rvz|iso|gcm|wbfs|nfs|ciso|gcz)")', full_cmd)
+            if not m: m = re.search(r'(\S+\.(?:rvz|iso|gcm|wbfs|nfs|ciso|gcz))', full_cmd)
+            if m:
+                path = Path(m.group(1).strip('"'))
+                if path.exists():
+                    with open(path, 'rb') as f:
+                        header = f.read(0x40)
+                        if len(header) >= 6:
+                            id_str = header[0:6].decode('ascii', errors='ignore')
+                            if re.match(r'[A-Z0-9]{6}', id_str):
+                                return id_str
+                            if len(header) >= 0x16:
+                                id_str = header[0x10:0x16].decode('ascii', errors='ignore')
+                                if re.match(r'[A-Z0-9]{6}', id_str):
+                                    return id_str
+        except Exception: pass
+        return None
 
-        elif "RetroArch" in emu_display_name:
-            rom_name = Path(title).stem.lower()
-            for game in self.client.user_games:
-                if game['name'] == title:
-                    rom_name = Path(game['fs_name']).stem.lower()
-            search_paths = [emu_dir / "saves", Path(os.path.expandvars(r'%APPDATA%\RetroArch\saves'))]
-            for p in search_paths:
-                if p.exists():
-                    for f in p.glob(f"*{rom_name}*.srm"):
-                        return f
-            return search_paths[0] / f"{rom_name}.srm"
+    def resolve_save_path(self, emu_display_name, title, full_cmd, emu_path, platform=None, proc=None):
+        try:
+            emu_dir = Path(emu_path).parent
+            
+            # 1. NINTENDO SWITCH
+            if "Switch" in emu_display_name or platform == "switch":
+                title_id = None
+                t_lower = title.lower()
+                if "monster hunter rise" in t_lower: title_id = "0100B04011422000"
+                elif "monster hunter generations" in t_lower or "mhgu" in t_lower: title_id = "0100770008DD8000"
+                elif "tears of the kingdom" in t_lower or "totk" in t_lower: title_id = "0100F2C0115B6000"
+                elif "breath of the wild" in t_lower or "botw" in t_lower: title_id = "01007EF00011E000"
+                
+                if not title_id:
+                    m = re.search(r'01[0-9a-f]{14}', full_cmd)
+                    if m: title_id = m.group(0).upper()
+                
+                if title_id:
+                    search_roots = [emu_dir / "user", emu_dir / "data", Path(os.path.expandvars(r'%APPDATA%\yuzu')), Path(os.path.expandvars(r'%APPDATA%\eden')), Path(os.path.expandvars(r'%APPDATA%\sudachi'))]
+                    for root in search_roots:
+                        if not root.exists(): continue
+                        for p in root.rglob(title_id):
+                            if p.is_dir() and "save" in str(p).lower(): return p
+                        save_base = root / "nand/user/save"
+                        if save_base.exists():
+                            profiles = [d for d in save_base.iterdir() if d.is_dir() and d.name != "0000000000000000"]
+                            if profiles:
+                                profile_id = profiles[0].name
+                                return save_base / "0000000000000000" / profile_id / title_id
+                    return search_roots[0] / "nand/user/save/0000000000000000/0000000000000000" / title_id
+
+            # 2. GAMECUBE / WII / NGC (DOLPHIN)
+            elif "Dolphin" in emu_display_name or platform in ["gc", "wii", "ngc"]:
+                user_dir = Path.home() / "Documents" / "Dolphin Emulator"
+                if (emu_dir / "portable.txt").exists() or (emu_dir / "User").exists(): 
+                    user_dir = emu_dir / "User"
+                
+                game_id = None
+                if proc:
+                    try:
+                        for f in proc.open_files():
+                            p = Path(f.path)
+                            if platform == "wii" and "title/00010000" in p.as_posix() and "data" in p.name:
+                                return p.parent
+                            if platform in ["gc", "ngc"] and (p.suffix.lower() in [".raw", ".gci", ".sav"]):
+                                return p
+                            if "GameSettings" in p.as_posix() and p.suffix.lower() == ".ini":
+                                if len(p.stem) == 6 and re.match(r'[A-Z0-9]{6}', p.stem):
+                                    game_id = p.stem
+                    except Exception: pass
+
+                if not game_id:
+                    game_id = self.get_game_id_from_rom(full_cmd)
+                    
+                clean_title = re.sub(r'[^a-z0-9]', '', title.lower())
+                
+                for region in ["USA", "EUR", "JPN", "KOR", "JAP"]:
+                    gci_folder = user_dir / f"GC/{region}/Card A"
+                    if not gci_folder.exists(): continue
+
+                    if game_id:
+                        short_id = game_id[:4]
+                        for f in gci_folder.glob(f"*{short_id}*.gci"): return f
+                        for f in gci_folder.glob(f"*-{short_id}-*.gci"): return f
+                        very_short_id = game_id[:3]
+                        for f in gci_folder.glob(f"*{very_short_id}*.gci"): return f
+
+                    for f in gci_folder.glob("*.gci"):
+                        clean_f = re.sub(r'[^a-z0-9]', '', f.stem.lower())
+                        if clean_title in clean_f or clean_f in clean_title:
+                            return f
+
+                if platform == "wii":
+                    nand_base = user_dir / "Wii/title/00010000"
+                    if nand_base.exists():
+                        subdirs = [d for d in nand_base.iterdir() if d.is_dir()]
+                        if subdirs:
+                            subdirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                            for d in subdirs:
+                                if (d / "data").exists(): return d / "data"
+                else:
+                    gc_dir = user_dir / "GC"
+                    search_paths = [gc_dir / "MemoryCardA.USA.raw", gc_dir / "MemoryCardA.EUR.raw", gc_dir / "MemoryCardA.JPN.raw", gc_dir / "MemoryCardA.raw"]
+                    for p in search_paths:
+                        if p.exists(): return p
+                    return search_paths[0] if search_paths[0].exists() else None
+
+            # 3. PLAYSTATION 2
+            elif "PlayStation 2" in emu_display_name or platform == "ps2":
+                search_paths = [emu_dir / "memcards" / "Mcd001.ps2", Path(os.path.expandvars(r'%APPDATA%\PCSX2\memcards\Mcd001.ps2')), Path.home() / "Documents" / "PCSX2" / "memcards" / "Mcd001.ps2"]
+                for p in search_paths:
+                    if p.exists(): return p
+                return search_paths[0]
+
+            # 4. RETROARCH
+            elif "RetroArch" in emu_display_name or platform == "multi":
+                rom_name = Path(title).stem.lower()
+                for game in self.client.user_games:
+                    if game['name'] == title: rom_name = Path(game['fs_name']).stem.lower()
+                search_paths = [emu_dir / "saves", Path(os.path.expandvars(r'%APPDATA%\RetroArch\saves'))]
+                for p in search_paths:
+                    if p.exists():
+                        for f in p.glob(f"*{rom_name}*.srm"): return f
+                return search_paths[0] / f"{rom_name}.srm"
+        except Exception as e:
+            self.log_signal.emit(f"⚠️ Error resolving save path: {e}")
             
         return None
 
     def handle_exit(self, data):
-        self.log_signal.emit(f"🛑 Session Ended: {data['title']}")
-        if not os.path.exists(data['save_path']):
-            return
-        if data['is_folder'] and not any(Path(data['save_path']).iterdir()):
-            return
-            
-        new_h = calculate_folder_hash(data['save_path']) if data['is_folder'] else calculate_file_hash(data['save_path'])
-        if new_h == data['initial_hash']:
-            self.log_signal.emit(f"⏭️ No changes in {data['title']}. Skipping sync.")
-            return
-
-        self.log_signal.emit(f"📝 Changes detected! Syncing...")
-        temp_zip = f"sync_{data['rom_id']}.zip"
         try:
-            zip_path(data['save_path'], temp_zip)
-            success, msg = self.client.upload_save(data['rom_id'], data['emu'], temp_zip)
-            if success:
-                self.log_signal.emit("✨ Sync Complete!")
-                if str(data['rom_id']) in self.sync_cache:
-                    del self.sync_cache[str(data['rom_id'])]
-                    self.save_cache()
-            else:
-                self.log_signal.emit(f"❌ Sync Failed: {msg}")
-        finally:
-            if os.path.exists(temp_zip):
-                os.remove(temp_zip)
+            self.log_signal.emit(f"🛑 Session Ended: {data['title']}")
+            time.sleep(2)
+            
+            save_path = Path(data['save_path'])
+            if not save_path.exists():
+                self.log_signal.emit(f"⚠️ Save file missing on exit: {save_path}. Skipping sync.")
+                return
+                
+            if data['is_folder'] and not any(save_path.iterdir()):
+                self.log_signal.emit("⚠️ Save folder empty on exit. Skipping sync.")
+                return
+                
+            new_h = calculate_folder_hash(str(save_path)) if data['is_folder'] else calculate_file_hash(str(save_path))
+            
+            if new_h == data['initial_hash']:
+                self.log_signal.emit(f"⏭️ No changes in {data['title']}. Skipping sync.")
+                return
+
+            self.log_signal.emit(f"📝 Changes detected! Syncing...")
+            temp_zip = f"sync_{data['rom_id']}.zip"
+            try:
+                zip_path(str(save_path), temp_zip)
+                success, msg = self.client.upload_save(data['rom_id'], data['emu'], temp_zip)
+                if success:
+                    self.log_signal.emit("✨ Sync Complete!")
+                    if str(data['rom_id']) in self.sync_cache:
+                        del self.sync_cache[str(data['rom_id'])]
+                        self.save_cache()
+                else:
+                    self.log_signal.emit(f"❌ Sync Failed: {msg}")
+            finally:
+                if os.path.exists(temp_zip):
+                    try: os.remove(temp_zip)
+                    except Exception: pass
+        except Exception as e:
+            self.log_signal.emit(f"❌ Error during sync: {e}")

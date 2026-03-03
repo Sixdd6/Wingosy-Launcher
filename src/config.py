@@ -8,7 +8,6 @@ class ConfigManager:
     DEFAULT_CONFIG = {
         "host": "http://localhost:8285",
         "username": "admin",
-        "password": "",
         "token": None,
         "auto_track": False,
         "auto_pull_saves": True,

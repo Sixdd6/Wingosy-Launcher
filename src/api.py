@@ -64,7 +64,7 @@ class RomMClient:
         # Fallback to direct ID path if all else fails
         return f"{self.host}/api/raw/covers/{game['id']}"
 
-    def download_rom(self, rom_id, file_name, target_path, progress_cb=None, is_cancelled=None):
+    def download_rom(self, rom_id, file_name, target_path, progress_cb=None, thread=None):
         try:
             # Reverting to the URL structure from the working version
             from urllib.parse import quote
@@ -82,7 +82,7 @@ class RomMClient:
             start = time.time()
             with open(target_path, 'wb') as f:
                 for chunk in r.iter_content(1024*1024):
-                    if is_cancelled and is_cancelled[0]:
+                    if thread and thread.isInterruptionRequested():
                         f.close()
                         os.remove(target_path)
                         return False
@@ -94,7 +94,8 @@ class RomMClient:
                             speed = downloaded / elapsed if elapsed > 0 else 0
                             progress_cb(downloaded, total, speed)
             return True
-        except:
+        except Exception as e:
+            print(f"[API] ROM download error: {e}")
             return False
 
     def get_latest_save(self, rom_id):
@@ -115,10 +116,11 @@ class RomMClient:
                     items.sort(key=lambda x: x.get('id', 0), reverse=True)
                     return items[0]
             return None
-        except:
+        except Exception as e:
+            print(f"[API] Error getting latest save: {e}")
             return None
 
-    def download_save(self, save_item, target_path):
+    def download_save(self, save_item, target_path, thread=None):
         try:
             path = save_item.get('download_path') or save_item.get('path')
             url = path if path.startswith('http') else f"{self.host}{path}"
@@ -126,11 +128,16 @@ class RomMClient:
             if r.status_code == 200:
                 with open(target_path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
+                        if thread and thread.isInterruptionRequested():
+                            f.close()
+                            os.remove(target_path)
+                            return False
                         if chunk:
                             f.write(chunk)
                 return True
             return False
-        except:
+        except Exception as e:
+            print(f"[API] Error downloading save: {e}")
             return False
 
     def upload_save(self, rom_id, emulator, file_path):
@@ -161,10 +168,11 @@ class RomMClient:
                         firmware_list.append(f)
                 return firmware_list
             return []
-        except:
+        except Exception as e:
+            print(f"[API] Error getting firmware: {e}")
             return []
 
-    def download_firmware(self, fw_item, target_path, progress_cb=None):
+    def download_firmware(self, fw_item, target_path, progress_cb=None, thread=None):
         try:
             path = fw_item.get('download_path')
             if not path:
@@ -179,6 +187,10 @@ class RomMClient:
             start = time.time()
             with open(target_path, 'wb') as f:
                 for chunk in r.iter_content(1024*1024):
+                    if thread and thread.isInterruptionRequested():
+                        f.close()
+                        os.remove(target_path)
+                        return False
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -187,5 +199,6 @@ class RomMClient:
                             speed = downloaded / elapsed if elapsed > 0 else 0
                             progress_cb(downloaded, total, speed)
             return True
-        except:
+        except Exception as e:
+            print(f"[API] Error downloading firmware: {e}")
             return False
