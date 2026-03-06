@@ -133,10 +133,13 @@ class DolphinDownloader(BaseDownloader):
             self.finished.emit(ok, msg)
 
 class GithubDownloader(BaseDownloader):
-    def __init__(self, repo, target_dir):
+    def __init__(self, repo, target_dir, required_keywords=None, excluded_keywords=None):
         super().__init__()
         self.repo = repo
         self.target_dir = target_dir
+        self.required_keywords = required_keywords or ['win', 'x64', 'windows', 'amd64', 'msvc', 'desktop']
+        self.excluded_keywords = excluded_keywords or ['installer', 'symbols', 'debug']
+
     def run(self):
         try:
             api_url = f"https://api.github.com/repos/{self.repo}/releases/latest"
@@ -147,28 +150,27 @@ class GithubDownloader(BaseDownloader):
                 return
                 
             resp = resp_obj.json()
-            asset = None
-            keywords = ['win', 'x64', 'windows', 'amd64', 'qt', 'msvc', 'desktop']
-            extensions = ['.zip', '.7z']
             
+            required = self.required_keywords
+            excluded = self.excluded_keywords
+            
+            zip_assets = []
             for a in resp.get('assets', []):
                 name = a['name'].lower()
-                if any(k in name for k in keywords) and any(name.endswith(ext) for ext in extensions):
-                    if not name.endswith('-symbols.7z') and 'installer' not in name:
-                        asset = a
-                        break
+                # Skip excluded
+                if any(ex in name for ex in excluded):
+                    continue
+                # Must be zip or 7z
+                if not any(name.endswith(ext) for ext in ['.zip', '.7z']):
+                    continue
+                # Must match at least one required keyword
+                if any(k in name for k in required):
+                    zip_assets.append(a)
             
+            # Pick zip over 7z when both available
+            asset = next((a for a in zip_assets if a['name'].lower().endswith('.zip')), None)
             if not asset:
-                for a in resp.get('assets', []):
-                    if any(k in a['name'].lower() for k in keywords) and a['name'].endswith(('.zip', '.7z')):
-                        asset = a
-                        break
-
-            if not asset:
-                for a in resp.get('assets', []):
-                    if any(k in a['name'].lower() for k in keywords) and a['name'].endswith('.exe'):
-                        asset = a
-                        break
+                asset = next((a for a in zip_assets if a['name'].lower().endswith('.7z')), None)
             
             if not asset:
                 self.finished.emit(False, "No suitable release file found.")

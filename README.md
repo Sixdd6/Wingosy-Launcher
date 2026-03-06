@@ -9,7 +9,8 @@ A Windows port of the original [Argosy Launcher for Android](https://github.com/
 ## Key Features
 
 - **Cloud Save Syncing**: Automatically pulls your latest saves from RomM before you play and pushes changes back to the cloud as soon as you close the emulator.
-- **Universal PLAY Button**: One-click to sync, launch, and track your games across PCSX2, Dolphin, Yuzu/Eden, RetroArch, and more.
+- **Universal PLAY Button**: One-click to sync, launch, and track your games across PCSX2, Dolphin, Cemu, RPCS3, Yuzu/Eden, RetroArch, and more.
+- **Playtime Tracking**: Automatically track how long you play each game and see your total playtime in the library.
 - **Portable Emulator Management**: Download and manage the latest versions of your favorite emulators directly through the app. Supports "Portable Mode" automatically.
 - **BIOS / Firmware Rescue**: Search and download required BIOS files directly from your RomM library or firmware index.
 - **Library Search & Filtering**: Instantly find games by name or console platform.
@@ -22,42 +23,42 @@ A Windows port of the original [Argosy Launcher for Android](https://github.com/
     -   Go to the **Emulators** tab.
     -   Set your **ROM Path** (where your games are stored).
     -   Set your **Emu Path** (where you want emulators to be installed).
-4.  **Sync & Play**: Click on any game in your library and hit **▶ PLAY**. Wingosy v0.4.0 handles the rest!
+4.  **Sync & Play**: Click on any game in your library and hit **▶ PLAY**. Wingosy v0.5.0 handles the rest!
 
 ## Supported Emulators
 
-Note: PlayStation 2, Nintendo Switch, and GameCube/Wii have been fully tested and verified as stable.
-
-- **PlayStation 2**: PCSX2 (Qt) - Tested
-- **Nintendo Switch**: Yuzu / Eden / Ryujinx - Tested
-- **GameCube / Wii**: Dolphin - Tested
-- **Multi-system**: RetroArch - Tested
+- **PlayStation 3**: RPCS3 - **Stable** (Portable & AppData)
+- **Wii U**: Cemu - **Stable** (Portable & AppData)
+- **PlayStation 2**: PCSX2 (Qt) - **Stable**
+- **Nintendo Switch**: Yuzu / Eden / Ryujinx - **Stable**
+- **Nintendo 3DS**: Azahar / Citra - **Stable**
+- **GameCube / Wii**: Dolphin - **Stable**
+- **Multi-system**: RetroArch - **Stable**
 - **And more...** (easily extensible via `config.json`)
 
 ## Roadmap
 
-### Current Status (v0.4.0)
-- ✅ Tested and Stable: PlayStation 2 (PCSX2), Nintendo Switch (Yuzu/Eden), Dolphin, RetroArch
-- ✅ Auto-updating: downloads and replaces Wingosy.exe in place, no browser needed
+### Current Status (v0.5.0)
+- ✅ **New**: Asynchronous Library Loading (No UI freezing)
+- ✅ **New**: Playtime tracking per game
+- ✅ **New**: Support for RPCS3, Cemu, and Azahar/Citra
+- ✅ **New**: Portable Mode detection for all major emulators
+- ✅ **New**: Smarter GitHub asset selection with keyword filtering
+- ✅ Auto-updating: downloads and replaces Wingosy.exe in place via batch intermediary
 - ✅ Save conflict resolution: choose between cloud, local, or keep both
 - ✅ RetroArch core auto-download for missing cores
 - ✅ System tray notifications for sync events
-- ✅ Download queue panel with progress and cancel
 - ✅ Game state indicators on library cards (local ROM, cloud save)
 - ✅ Emulator health indicators (green/red/grey dot per emulator)
-- ✅ Library refresh button and F5 shortcut
-- ✅ First-run welcome screen
-- ✅ Connection test in Settings
-- ✅ Window size and position remembered between sessions
 - ✅ Keyboard shortcuts (Ctrl+F to search, F5 to refresh)
-- ✅ About dialog
 
-### Planned for v0.5.0
-- RPCS3 (PS3) and Citra (3DS) save path resolution
-- RetroArch intelligence: auto-select core based on RomM platform metadata
+### Planned for future releases
+- Custom emulator profile management via UI
+- Xenia (Xbox 360) and DuckStation (PS1) save path resolution
 - Detailed game view with screenshots and metadata from RomM
-- Custom emulator profiles via UI
-- System Tray: minimize to tray on close option
+- Game metadata editing (Title, Platform, etc.) directly in Wingosy
+- Improved save slot management (rolling backups)
+- Dark/Light mode theme switching
 
 ## Building from Source
 
@@ -77,42 +78,31 @@ pyinstaller --noconsole --onefile --name Wingosy --icon "icon.png" --add-data "i
 
 ## Changelog
 
+### v0.5.0
+- **Asynchronous Library Loading**: Refactored library fetching to a background thread to prevent UI freezing on startup and refresh.
+- **Expanded Emulator Support**: Added official save path resolution and launch logic for **Wii U (Cemu)**, **PlayStation 3 (RPCS3)**, and **Nintendo 3DS (Azahar/Citra)**.
+- **Playtime Tracking**: Sessions are now timed, and total playtime is stored in `playtime.json` and displayed in game details.
+- **Portable Mode Awareness**: Smarter resolution of save folders for emulators using portable mode (checking for `User`, `mlc01`, or `dev_hdd0` next to the EXE).
+- **TitleID Awareness**: RPCS3 and Cemu now correctly resolve specific game subfolders via command-line TitleID extraction.
+- **Improved Sync Logic**: Pulling from cloud now correctly triggers if local files are missing, even if timestamps match the cache.
+- **Self-Update Fix**: Implemented a batch-file restart pattern to ensure PyInstaller temporary directories are fully released on update.
+- **Qt Compatibility**: Cleans environment variables before launching emulators to prevent crashes in apps with their own bundled Qt runtime (e.g. PCSX2).
+- **Advanced Asset Downloader**: Smarter GitHub release picking using required/excluded keywords defined in config.
+- **UI Enhancements**: Added cloud save indicator dot to game cards (Blue dot).
+- Fixed: ROM path casing preserved on Windows to allow header reading.
+- Fixed: Signal disconnection `RuntimeError` during game launch.
+
+### v0.4.4
+- Initial implementation of playtime tracking and cloud indicators.
+- Self-update restart logic improvements.
+- Dolphin/GameCube path resolution fixes.
+
 ### v0.4.0
 - Auto-updating exe with in-place replacement and restart prompt
 - Save conflict resolution dialog (Use Cloud / Keep Local / Keep Both)
-- RetroArch core auto-download from libretro buildbot when core is missing
-- RetroArch fallback for platforms without a dedicated emulator (N64, PSX, SNES, GBA, etc.)
-- System tray notifications for sync success, failure, and cloud save applied
-- Download queue panel showing active downloads with progress and cancel buttons
-- Game state indicators on library cards: green dot for local ROM, blue dot for cloud save
-- Emulator health indicators: green/red/grey status per emulator row
-- Library refresh button and F5 keyboard shortcut
-- Ctrl+F keyboard shortcut to focus search
-- First-run welcome dialog explaining setup steps
-- Connection test button in Settings
-- Window geometry saved and restored between sessions
-- About dialog in Settings
-- Logout confirmation dialog
-- URL validation in setup dialog
-- UI refactored from single 1000+ line file into maintainable package structure
-- Save temp files now go to ~/.wingosy/tmp/ instead of current working directory
-- Fixed: simultaneous game launches no longer corrupt each other's temp files
-- Fixed: image fetch queue properly cancels on library filter change
-- Fixed: track_session no longer blocks the UI thread on PLAY
-- Fixed: Switch title ID resolution via SQLite cache, XCI header, and recency scan
-
-### v0.3.1
-- Fixed Switch save path resolution for Eden and Yuzu
-- Dynamic title ID resolution replacing hardcoded dictionary
-- Multi-method fallback: SQLite cache, XCI header, recency scan, regex
-- Expanded search roots for yuzu, eden, sudachi, torzu
-
-### v0.3.0
-- Initial Windows release
-- Cloud save sync with RomM
-- Portable emulator management
-- BIOS/firmware download
-- Process-specific game tracking
+- RetroArch core auto-download from libretro buildbot
+- Game state indicators: green dot for local ROM, blue dot for cloud save
+- UI refactored into maintainable package structure
 
 ## License
 

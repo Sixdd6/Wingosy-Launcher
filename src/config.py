@@ -46,7 +46,9 @@ class ConfigManager:
                 "config_path": "",
                 "github": "RPCS3/rpcs3-binaries-win",
                 "platform_slug": "ps3",
-                "folder": "rpcs3"
+                "folder": "rpcs3",
+                "asset_keywords_required": ["windows", "x64"],
+                "asset_keywords_exclude": ["installer", "symbols", "debug", "android", "mac", "linux"]
             },
             "Multi-Console (RetroArch)": {
                 "exe": "retroarch.exe", 
@@ -56,7 +58,9 @@ class ConfigManager:
                 "config_path": str(Path(os.path.expandvars(r'%APPDATA%\RetroArch\retroarch.cfg'))),
                 "url": "https://buildbot.libretro.com/stable/1.22.2/windows/x86_64/RetroArch.7z",
                 "platform_slug": "multi",
-                "folder": "retroarch"
+                "folder": "retroarch",
+                "asset_keywords_required": ["windows", "x64"],
+                "asset_keywords_exclude": ["installer", "symbols", "debug", "android", "mac", "linux"]
             },
             "GameCube / Wii": {
                 "exe": "Dolphin.exe", 
@@ -78,7 +82,30 @@ class ConfigManager:
                 "github": "PCSX2/pcsx2",
                 "platform_slug": "ps2",
                 "folder": "pcsx2",
+                "portable_trigger": "portable.txt",
+                "asset_keywords_required": ["windows", "x64"],
+                "asset_keywords_exclude": ["installer", "symbols", "debug", "android", "mac", "linux"]
+            },
+            "Wii U (Cemu)": {
+                "exe": "Cemu.exe",
+                "type": "folder",
+                "path": "",
+                "config_path": str(Path(os.path.expandvars(r'%APPDATA%\Cemu'))),
+                "url": "https://github.com/cemu-project/Cemu/releases/download/v2.0-60/cemu-2.0-60-windows-x64.zip",
+                "platform_slug": "wiiu",
+                "folder": "cemu",
                 "portable_trigger": "portable.txt"
+            },
+            "Nintendo 3DS (Azahar)": {
+                "exe": "azahar.exe",
+                "type": "folder",
+                "path": "",
+                "config_path": str(Path(os.path.expandvars(r'%APPDATA%\Azahar\config'))),
+                "github": "azahar-emu/azahar",
+                "platform_slug": "n3ds",
+                "folder": "azahar",
+                "asset_keywords_required": ["windows", "msys2"],
+                "asset_keywords_exclude": ["msvc", "installer", "symbols", "android", "mac", "linux", "appimage"]
             }
         }
     }

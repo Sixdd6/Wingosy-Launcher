@@ -452,7 +452,10 @@ class GameDetailDialog(QDialog):
                     args = [emu_data['path'], str(local_rom)]
                     self.main_window.log(f"⚠️ No known RetroArch core for {platform}, launching without core")
             else:
-                args = [emu_data['path'], str(local_rom)]
+                if "Cemu" in emu_display_name:
+                    args = [emu_data['path'], "-g", str(local_rom)]
+                else:
+                    args = [emu_data['path'], str(local_rom)]
 
             # Pre-launch sync
             watcher = self.main_window.watcher
@@ -463,10 +466,10 @@ class GameDetailDialog(QDialog):
             
             if save_path:
                 save_path = str(Path(save_path).resolve())
-                is_folder = platform in ["switch", "ps3", "wii"]
+                is_folder = platform in ["switch", "ps3", "wii", "wiiu", "n3ds"]
                 if os.path.exists(save_path):
                     is_folder = os.path.isdir(save_path)
-                
+
                 # Blocking sync with local event loop
                 loop = QEventLoop()
                 conflict_captured = []
@@ -508,7 +511,7 @@ class GameDetailDialog(QDialog):
                     if dialog.exec() == QDialog.Accepted:
                         mode = dialog.result_mode
                         server_updated_at = server_ua_container[0]
-                        
+
                         if mode == "cloud":
                             # We'll re-run pull with force=True inside a thread
                             # To avoid duplicating logic, we can just use the ConflictResolveThread
@@ -516,7 +519,7 @@ class GameDetailDialog(QDialog):
                             resolve_thread = ConflictResolveThread(watcher, rid, t, lp, is_folder)
                             resolve_thread.start()
                             resolve_thread.wait()
-                            
+
                             if server_updated_at:
                                 watcher.sync_cache[str(rid)] = server_updated_at
                                 watcher.save_cache()
@@ -529,16 +532,16 @@ class GameDetailDialog(QDialog):
                             if os.path.exists(cloud_bak):
                                 if os.path.isdir(cloud_bak): shutil.rmtree(cloud_bak, ignore_errors=True)
                                 else: os.remove(cloud_bak)
-                            
+
                             # temp_dl (td) could be a file or folder depending on how it was downloaded
                             if os.path.isdir(td): shutil.copytree(td, cloud_bak)
                             else: shutil.copy2(td, cloud_bak)
                             self.main_window.log(f"📁 Cloud save backed up to: {cloud_bak}")
-                            
+
                             if server_updated_at:
                                 watcher.sync_cache[str(rid)] = server_updated_at
                                 watcher.save_cache()
-                        
+
                         if os.path.exists(td):
                             try: shutil.rmtree(td, ignore_errors=True) if os.path.isdir(td) else os.remove(td)
                             except: pass
@@ -549,7 +552,8 @@ class GameDetailDialog(QDialog):
                             except: pass
                         return
 
-            watcher.skip_next_pull_rom_id = str(rom_id)
+                watcher.skip_next_pull_rom_id = str(rom_id)
+                self.main_window.log(f"✅ Pre-launch sync complete for {title}.")
 
             # Create a clean environment for the emulator (remove Wingosy's Qt variables)
             clean_env = os.environ.copy()

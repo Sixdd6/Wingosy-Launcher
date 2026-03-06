@@ -86,7 +86,7 @@ class WingosyWatcher(QThread):
             
             if save_path:
                 save_path = str(Path(save_path).resolve())
-                is_folder = platform in ["switch", "ps3", "wii"]
+                is_folder = platform in ["switch", "ps3", "wii", "wiiu", "n3ds"]
                 if os.path.exists(save_path):
                     is_folder = os.path.isdir(save_path)
                 
@@ -176,8 +176,24 @@ class WingosyWatcher(QThread):
             try:
                 if is_zip:
                     if is_folder:
+                        extract_parent = str(Path(local_path).parent)
+                        folder_name = Path(local_path).name
+                        # Clear only the target folder, not siblings
+                        if os.path.exists(local_path):
+                            shutil.rmtree(local_path, ignore_errors=True)
+                        os.makedirs(extract_parent, exist_ok=True)
                         with zipfile.ZipFile(temp_dl, 'r') as z:
-                            z.extractall(Path(local_path).parent)
+                            # Check if zip has a root folder matching our save folder
+                            names = z.namelist()
+                            has_root = any(n.startswith(folder_name + '/') or 
+                                          n.startswith(folder_name + '\\') for n in names)
+                            if has_root:
+                                # Zip already contains the folder, extract to parent
+                                z.extractall(extract_parent)
+                            else:
+                                # Zip contains raw files, extract into the folder
+                                os.makedirs(local_path, exist_ok=True)
+                                z.extractall(local_path)
                     else:
                         with zipfile.ZipFile(temp_dl, 'r') as z:
                             target_member = None
@@ -229,7 +245,6 @@ class WingosyWatcher(QThread):
         return None
 
     def resolve_save_path(self, emu_display_name, title, full_cmd, emu_path, platform=None, proc=None):
-        self.log_signal.emit(f"🔍 resolve_save_path: emu='{emu_display_name}' platform='{platform}' title='{title}'")
         try:
             emu_dir = Path(emu_path).parent
             
@@ -439,6 +454,89 @@ class WingosyWatcher(QThread):
                 for p in search_paths:
                     if p.exists(): return p
                 return search_paths[0]
+
+            # 3.5 PLAYSTATION 3 (RPCS3)
+            elif "PlayStation 3" in emu_display_name or platform == "ps3":
+                # Check for portable install first (dev_hdd0 in emu folder), then fallback to AppData
+                save_base = emu_dir / "dev_hdd0/home/00000001/savedata"
+                if not save_base.exists():
+                    save_base = Path(os.path.expandvars(r'%APPDATA%\RPCS3\dev_hdd0\home\00000001\savedata'))
+                
+                if save_base.exists():
+                    # 1. Try to find folder matching Title ID in cmd line
+                    tid_match = re.search(r'([A-Z]{4}\d{5})', full_cmd)
+                    if tid_match:
+                        return save_base / tid_match.group(1).upper()
+
+                    # 2. Fallback to existing logic (most recent subfolder with PARAM.SFO)
+                    subdirs = sorted(
+                        [d for d in save_base.iterdir() if d.is_dir() and (d / "PARAM.SFO").exists()],
+                        key=lambda x: x.stat().st_mtime, reverse=True
+                    )
+                    if subdirs:
+                        return subdirs[0]
+                return save_base
+
+            # 5. WII U (CEMU)
+            elif "Cemu" in emu_display_name or platform == "wiiu":
+                # Check for portable install first (mlc01 in emu folder)
+                mlc_path = emu_dir / "mlc01"
+                if not mlc_path.exists():
+                    # Try to read MLC path from Cemu settings.xml
+                    settings_xml = emu_dir / "settings.xml"
+                    if settings_xml.exists():
+                        try:
+                            import xml.etree.ElementTree as ET
+                            tree = ET.parse(settings_xml)
+                            root = tree.getroot()
+                            mlc_node = root.find('.//mlc_path')
+                            if mlc_node is not None and mlc_node.text:
+                                mlc_path = Path(mlc_node.text)
+                        except Exception:
+                            pass
+                
+                if not mlc_path or not mlc_path.exists():
+                    mlc_path = Path(os.path.expandvars(r'%APPDATA%\Cemu\mlc01'))
+                
+                save_base = mlc_path / "usr/save/00050000"
+                if save_base.exists():
+                    title_dirs = sorted(
+                        [d for d in save_base.iterdir() if d.is_dir()],
+                        key=lambda x: x.stat().st_mtime, reverse=True
+                    )
+                    for title_dir in title_dirs:
+                        candidate = title_dir / "user" / "80000001"
+                        if candidate.exists() and any(candidate.iterdir()):
+                            return candidate
+                    # First launch - no save exists yet, find most likely title dir
+                    # and return the expected path so we know where to watch
+                    for title_dir in title_dirs:
+                        user_dir = title_dir / "user" / "80000001"
+                        if (title_dir / "user").exists():
+                            return user_dir
+                return None
+
+            # 6. NINTENDO 3DS (CITRA)
+            elif any(x in emu_display_name for x in ["Citra", "Azahar", "3DS"]) or platform in ["3ds", "n3ds"]:
+                citra_base = Path(os.path.expandvars(r'%APPDATA%\Citra\sdmc\Nintendo 3DS'))
+                if citra_base.exists():
+                    # Walk to find most recently modified title save
+                    best = None
+                    best_mtime = 0
+                    for id1 in citra_base.iterdir():
+                        for id2 in id1.iterdir():
+                            title_base = id2 / "title/00040000"
+                            if not title_base.exists(): continue
+                            for tid in title_base.iterdir():
+                                candidate = tid / "data/00000001"
+                                if candidate.exists():
+                                    mtime = candidate.stat().st_mtime
+                                    if mtime > best_mtime:
+                                        best_mtime = mtime
+                                        best = candidate
+                    if best:
+                        return best
+                return Path(os.path.expandvars(r'%APPDATA%\Citra\sdmc'))
 
             # 4. RETROARCH
             elif "RetroArch" in emu_display_name or platform == "multi" or platform in RETROARCH_PLATFORMS:

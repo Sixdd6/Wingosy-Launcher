@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QMessageBox, QDialog, QLineEdit, QDialogButtonBox, 
                              QScrollArea)
 from PySide6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut
-from PySide6.QtCore import Qt, QSettings, Slot, Signal
+from PySide6.QtCore import Qt, QSettings, Slot, Signal, QThread, QTimer
 
 from src.ui.threads import (ImageFetcher, BiosDownloader, DolphinDownloader, 
                             DirectDownloader, GithubDownloader, ConflictResolveThread)
@@ -277,7 +277,10 @@ class WingosyMainWindow(QMainWindow):
             self.log(f"🚀 Downloading {name}...")
             if emu_data.get("dolphin_latest", False): dl_thread = DolphinDownloader(str(target_dir))
             elif url: dl_thread = DirectDownloader(url, str(target_dir))
-            elif repo: dl_thread = GithubDownloader(repo, str(target_dir))
+            elif repo: 
+                required = emu_data.get("asset_keywords_required")
+                excluded = emu_data.get("asset_keywords_exclude")
+                dl_thread = GithubDownloader(repo, str(target_dir), required, excluded)
             else: return
             
             self.download_queue.add_download(name, dl_thread)

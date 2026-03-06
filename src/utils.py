@@ -56,12 +56,11 @@ def calculate_zip_content_hash(zip_path):
     return hashlib.sha256(combined).hexdigest()
 
 def zip_path(source_path, output_zip):
-    source_path = Path(source_path)
-    with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as z:
-        if source_path.is_file():
-            z.write(source_path, source_path.name)
+    source = Path(source_path)
+    with zipfile.ZipFile(output_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+        if source.is_dir():
+            for file in source.rglob('*'):
+                if file.is_file():
+                    zf.write(file, source.name / file.relative_to(source))
         else:
-            for root, _, files in os.walk(source_path):
-                for file in files:
-                    full_path = Path(root) / file
-                    z.write(full_path, full_path.relative_to(source_path))
+            zf.write(source, source.name)
