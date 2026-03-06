@@ -297,6 +297,22 @@ class GameDetailDialog(QDialog):
         detail_layout.addWidget(QLabel(f"<h2>{game.get('name')}</h2>"))
         detail_layout.addWidget(QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}"))
         
+        # Playtime display
+        playtime_path = Path.home() / ".wingosy" / "playtime.json"
+        playtime_str = "Never played"
+        if playtime_path.exists():
+            try:
+                import json
+                with open(playtime_path, 'r') as f:
+                    playtime_data = json.load(f)
+                total_min = playtime_data.get(str(game['id']), 0)
+                if total_min > 0:
+                    hours = int(total_min // 60)
+                    minutes = int(total_min % 60)
+                    playtime_str = f"{hours}h {minutes}m"
+            except Exception: pass
+        detail_layout.addWidget(QLabel(f"🕐 <b>Playtime:</b> {playtime_str}"))
+
         self.play_btn = QPushButton("▶ PLAY")
         self.play_btn.setStyleSheet("background: #1e88e5; color: white; font-weight: bold; padding: 10px; font-size: 14pt;")
         self.play_btn.clicked.connect(self.play_game)

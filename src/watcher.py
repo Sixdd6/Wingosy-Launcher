@@ -111,7 +111,8 @@ class WingosyWatcher(QThread):
                     'save_path': save_path,
                     'title': title,
                     'initial_hash': h,
-                    'is_folder': is_folder
+                    'is_folder': is_folder,
+                    'start_time': time.time()
                 }
                 self.log_signal.emit(f"🎮 Tracking {title} on {emu_display_name} (PID: {pid})")
             else:
@@ -491,5 +492,29 @@ class WingosyWatcher(QThread):
                 if os.path.exists(temp_zip):
                     try: os.remove(temp_zip)
                     except Exception: pass
+            
+            # Playtime tracking
+            try:
+                session_minutes = (time.time() - data['start_time']) / 60
+                playtime_path = Path.home() / ".wingosy" / "playtime.json"
+                playtime_data = {}
+                if playtime_path.exists():
+                    try:
+                        with open(playtime_path, 'r') as f:
+                            playtime_data = json.load(f)
+                    except Exception: pass
+                
+                rid_str = str(data['rom_id'])
+                current_total = playtime_data.get(rid_str, 0)
+                new_total = current_total + session_minutes
+                playtime_data[rid_str] = new_total
+                
+                with open(playtime_path, 'w') as f:
+                    json.dump(playtime_data, f)
+                
+                self.log_signal.emit(f"🕐 Session: {session_minutes:.1f} min | Total: {new_total:.1f} min")
+            except Exception as e:
+                print(f"[Watcher] Playtime error: {e}")
+
         except Exception as e:
             self.log_signal.emit(f"❌ Error during sync: {e}")
