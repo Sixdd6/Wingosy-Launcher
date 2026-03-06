@@ -562,16 +562,35 @@ class GameDetailDialog(QDialog):
             for key in ["QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH", "QT_QPA_FONTDIR", "QT_QPA_PLATFORM", "QT_STYLE_OVERRIDE"]:
                 clean_env.pop(key, None)
             
-            # 2. Scrub PATH of PyInstaller internal directory to prevent DLL conflicts (e.g. vcruntime140.dll)
+            # 2. PyInstaller-specific cleanup when frozen
             if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
                 mei_path = str(Path(sys._MEIPASS)).lower()
+                
+                # Scrub PATH of our internal directory to prevent DLL search conflicts
                 path_val = clean_env.get("PATH", "")
                 path_parts = path_val.split(os.pathsep)
-                # Keep only parts that don't point inside our temp directory
                 new_path_parts = [p for p in path_parts if mei_path not in str(Path(p)).lower()]
                 clean_env["PATH"] = os.pathsep.join(new_path_parts)
 
-            proc = subprocess.Popen(args, env=clean_env)
+                # Physically rename conflicting DLLs in MEI temp dir so child 
+                # processes cannot load them instead of their own copies
+                conflicting_dlls = [
+                    'vcruntime140.dll',
+                    'vcruntime140_1.dll', 
+                    'msvcp140.dll',
+                    'msvcp140_1.dll',
+                    'concrt140.dll'
+                ]
+                for dll in conflicting_dlls:
+                    dll_path = Path(sys._MEIPASS) / dll
+                    if dll_path.exists():
+                        try:
+                            dll_path.rename(dll_path.with_suffix('.dll.bak'))
+                        except Exception:
+                            pass
+
+            emu_dir_cwd = str(Path(emu_data['path']).parent)
+            proc = subprocess.Popen(args, env=clean_env, cwd=emu_dir_cwd)
             self.main_window.log(f"🚀 Launched {emu_data['exe']} with {rom_name} (PID: {proc.pid})")
             
             if self.main_window.watcher:
