@@ -11,6 +11,8 @@ class ConfigManager:
         "auto_track": False,
         "first_run": True,
         "auto_pull_saves": True,
+        "cards_per_row": 6,
+        "retroarch_save_mode": "srm",
         "device_id": "wingosy-win-default",
         "base_rom_path": str(Path.home() / "Games" / "ROMs"),
         "base_emu_path": str(Path.home() / "Games" / "Emulators"),

@@ -300,14 +300,15 @@ class TestSavePathResolution:
 
     def test_retroarch_save_path_returns_something(self):
         """RetroArch should always return a .srm path."""
-        result = self.watcher.resolve_save_path(
+        res = self.watcher.resolve_save_path(
             "Multi-Console (RetroArch)", "Super Mario World",
             '"C:/emus/retroarch.exe" "C:/roms/smw.sfc"',
             "C:/emus/retroarch.exe", "snes"
         )
-        assert result is not None, "RetroArch save path returned None"
-        assert str(result).endswith(".srm"), (
-            f"RetroArch save path should be .srm, got: {result}")
+        assert res is not None, "RetroArch save path returned None"
+        path, is_f = res
+        assert str(path).endswith(".srm"), (
+            f"RetroArch save path should be .srm, got: {path}")
 
 
 # ── API Contract ──────────────────────────────────────────────────────────

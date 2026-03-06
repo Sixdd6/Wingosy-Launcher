@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QLineEdit, QScrollArea, QGridLayout, 
                              QComboBox, QSizePolicy)
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
 from PySide6.QtGui import QPixmap, QImage
 
 from src.ui.threads import ImageFetcher
@@ -15,7 +15,6 @@ class GameCard(QWidget):
     def __init__(self, game, client, config, sync_cache):
         super().__init__()
         self.game, self.client, self.config, self.sync_cache = game, client, config, sync_cache
-        self.setFixedSize(160, 240)
         self.setStyleSheet("""
             QWidget { background: #1e1e1e; border-radius: 8px; }
             QWidget:hover { background: #2c2c2c; border: 2px solid #1565c0; }
@@ -24,7 +23,6 @@ class GameCard(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         
         self.img_label = QLabel()
-        self.img_label.setFixedSize(150, 200)
         self.img_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.img_label)
         
@@ -65,13 +63,13 @@ class GameCard(QWidget):
         self.title_label = QLabel()
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setStyleSheet("color: white; font-weight: bold; border: none;")
-        self.title_label.setFixedWidth(150)
         self.title_label.setWordWrap(False)
         self.title_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.title_label.setText(elide_text(game.get('name', 'Unknown')))
         self.title_label.setToolTip(game.get('name', 'Unknown'))
         layout.addWidget(self.title_label)
         self.fetcher = None
+        self._full_pixmap = None
 
     def start_image_fetch(self, main_window, generation):
         url = self.client.get_cover_url(self.game)
@@ -84,7 +82,15 @@ class GameCard(QWidget):
         return None
 
     def set_image(self, game_id, pixmap):
-        self.img_label.setPixmap(pixmap.scaled(150, 200, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+        self._full_pixmap = pixmap
+        w = self.img_label.width()
+        h = self.img_label.height()
+        if w > 0 and h > 0:
+            self.img_label.setPixmap(
+                pixmap.scaled(w, h,
+                    Qt.KeepAspectRatioByExpanding,
+                    Qt.SmoothTransformation)
+            )
 
     def mouseReleaseEvent(self, event): 
         if event.button() == Qt.LeftButton:
@@ -147,7 +153,51 @@ class LibraryTab(QWidget):
         self.scroll_area.setWidget(self.grid_widget)
         # Connect scroll event to lazy loader
         self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self.scroll_area.viewport().installEventFilter(self)
+
+        self._resize_debounce = QTimer()
+        self._resize_debounce.setSingleShot(True)
+        self._resize_debounce.setInterval(80)
+        self._resize_debounce.timeout.connect(self._resize_all_cards)
+
         layout.addWidget(self.scroll_area)
+
+    def _get_card_size(self):
+        """Compute card width/height based on viewport width and cols setting."""
+        cols = max(1, int(self.config.get("cards_per_row", 6)))
+        spacing = self.grid_layout.horizontalSpacing() * (cols - 1) + 12
+        available = self.scroll_area.viewport().width() - spacing
+        w = max(100, available // cols)
+        h = int(w * 1.5)
+        return w, h, cols
+
+    def _resize_all_cards(self):
+        """Resize every rendered card to match current viewport width."""
+        if not self._all_cards:
+            return
+        w, h, cols = self._get_card_size()
+        self.grid_widget.setUpdatesEnabled(False)
+        try:
+            for card in self._all_cards:
+                card.setFixedSize(w, h)
+                card.img_label.setFixedSize(w - 10, h - 30)
+                if card._full_pixmap:
+                    card.img_label.setPixmap(
+                        card._full_pixmap.scaled(
+                            w - 10, h - 30,
+                            Qt.KeepAspectRatioByExpanding,
+                            Qt.SmoothTransformation
+                        )
+                    )
+                card.title_label.setFixedWidth(w - 10)
+        finally:
+            self.grid_widget.setUpdatesEnabled(True)
+
+    def eventFilter(self, source, event):
+        if (source is self.scroll_area.viewport()
+                and event.type() == QEvent.Resize):
+            self._resize_debounce.start()
+        return super().eventFilter(source, event)
 
     def _on_scroll(self, value):
         """Debounce scroll events before loading next batch."""
@@ -291,12 +341,14 @@ class LibraryTab(QWidget):
             self._load_more_label.deleteLater()
             self._load_more_label = None
 
+        card_w, card_h, cols_per_row = self._get_card_size()
+
         self.grid_widget.setUpdatesEnabled(False)
         try:
             # Calculate starting row/col from existing card count
             total_so_far = len(self._all_cards)
-            row = (total_so_far // 6)
-            col = total_so_far % 6
+            row = total_so_far // cols_per_row
+            col = total_so_far % cols_per_row
 
             for i, game in enumerate(batch):
                 if generation != self._render_generation:
@@ -304,10 +356,13 @@ class LibraryTab(QWidget):
 
                 card = GameCard(game, self.client, self.config, sync_cache)
                 card.clicked.connect(lambda g=game: self.open_detail(g))
+                card.setFixedSize(card_w, card_h)
+                card.img_label.setFixedSize(card_w - 10, card_h - 30)
+                card.title_label.setFixedWidth(card_w - 10)
                 self.grid_layout.addWidget(card, row, col)
                 self._all_cards.append(card)
                 col += 1
-                if col >= 6:
+                if col >= cols_per_row:
                     col = 0
                     row += 1
         finally:
@@ -339,9 +394,9 @@ class LibraryTab(QWidget):
             self._load_more_label.setStyleSheet(
                 "color: #1e88e5; font-size: 13px; "
                 "padding: 20px; background: #1a1a1a;")
-            next_row = (len(self._all_cards) + 5) // 6
+            next_row = (len(self._all_cards) + cols_per_row - 1) // cols_per_row
             self.grid_layout.addWidget(
-                self._load_more_label, next_row, 0, 1, 6)
+                self._load_more_label, next_row, 0, 1, cols_per_row)
 
         self._is_loading_batch = False
         

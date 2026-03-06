@@ -196,6 +196,30 @@ class RomMClient:
             print(f"[API] Error getting latest save: {e}")
             return None
 
+    def get_save_by_slot(self, rom_id, slot):
+        """
+        Fetch a specific save slot for a rom.
+        Returns the save item dict or None.
+        """
+        try:
+            url = f"{self.host}/api/roms/{rom_id}/saves"
+            r = requests.get(url, headers=self.get_auth_headers(), timeout=10)
+            if r.status_code != 200:
+                url = f"{self.host}/api/saves"
+                r = requests.get(url, headers=self.get_auth_headers(),
+                                 params={"rom_id": rom_id}, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("items", [])
+                # Find the save matching the requested slot
+                for item in items:
+                    if item.get("slot") == slot:
+                        return item
+            return None
+        except Exception as e:
+            print(f"[API] Error getting save by slot: {e}")
+            return None
+
     def download_save(self, save_item, target_path, thread=None):
         try:
             path = save_item.get('download_path') or save_item.get('path')
@@ -216,10 +240,10 @@ class RomMClient:
             print(f"[API] Error downloading save: {e}")
             return False
 
-    def upload_save(self, rom_id, emulator, file_path):
+    def upload_save(self, rom_id, emulator, file_path, slot="wingosy-windows"):
         try:
             url = f"{self.host}/api/saves"
-            params = {"rom_id": rom_id, "emulator": emulator, "slot": "wingosy-windows"}
+            params = {"rom_id": rom_id, "emulator": emulator, "slot": slot}
             file_name = f"sync_{rom_id}.zip"
             
             with open(file_path, 'rb') as f:

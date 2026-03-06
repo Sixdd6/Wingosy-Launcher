@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
                              QLabel, QLineEdit, QPushButton, QDialogButtonBox, 
                              QMessageBox, QProgressBar, QComboBox, QFileDialog, 
-                             QSizePolicy, QApplication, QWidget)
+                             QSizePolicy, QApplication, QWidget, QSpinBox)
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QEventLoop
 from PySide6.QtGui import QPixmap, QDesktopServices
 
@@ -19,47 +19,63 @@ from src.ui.widgets import format_speed, get_resource_path
 from src.platforms import RETROARCH_PLATFORMS, RETROARCH_CORES, platform_matches
 from src.utils import read_retroarch_cfg, write_retroarch_cfg_values
 
-_retroarch_autosave_checked = False  # module level to prompt once per session
-_ppsspp_assets_checked = False
+_retroarch_autosave_checked = False
 
-def check_retroarch_autosave(ra_exe_path, platform_slug, parent):
+def check_retroarch_autosave(ra_exe_path, platform_slug, parent, config=None):
+    """
+    Check retroarch.cfg and prompt user to enable auto save/load if needed.
+    Only prompts when save mode includes states (state or both).
+    PSP is always skipped.
+    Fires at most once per app session.
+    """
     global _retroarch_autosave_checked
     if _retroarch_autosave_checked:
         return
     _retroarch_autosave_checked = True
-    
-    # Skip PSP — it manages its own saves
+
+    # PSP always uses SAVEDATA folder sync — states not applicable
     if platform_slug in ("psp", "playstation-portable"):
         return
-    
+
+    # Only relevant when the user wants state-based saving
+    save_mode = config.get("retroarch_save_mode", "srm") if config else "srm"
+    if save_mode == "srm":
+        return  # SRM-only mode doesn't need savestates enabled
+
     cfg_path = Path(ra_exe_path).parent / "retroarch.cfg"
+    if not cfg_path.exists():
+        return
+
     cfg = read_retroarch_cfg(str(cfg_path))
-    
     auto_save = cfg.get("savestate_auto_save", "false")
     auto_load = cfg.get("savestate_auto_load", "false")
-    
+
     if auto_save == "true" and auto_load == "true":
-        return  # already enabled
-    
+        return  # already good
+
+    missing = []
+    if auto_save != "true": missing.append("savestate_auto_save")
+    if auto_load != "true": missing.append("savestate_auto_load")
+
     result = QMessageBox.question(
         parent,
-        "RetroArch Auto-Save",
-        "RetroArch auto save/load is currently disabled.\n\n"
-        "Would you like Wingosy to enable it?\n\n"
-        "This sets savestate_auto_save and savestate_auto_load "
-        "to true in retroarch.cfg.",
+        "RetroArch Auto-Save States",
+        f"Your RetroArch save mode is set to '{save_mode}' but auto save/load "
+        f"states are disabled in retroarch.cfg.\n\n"
+        f"Disabled: {', '.join(missing)}\n\n"
+        f"Would you like Wingosy to enable them automatically?\n"
+        f"(Writes to: {cfg_path})",
         QMessageBox.Yes | QMessageBox.No
     )
     if result == QMessageBox.Yes:
-        from src.utils import write_retroarch_cfg_values
         write_retroarch_cfg_values(str(cfg_path), {
             "savestate_auto_save": "true",
             "savestate_auto_load": "true"
         })
         QMessageBox.information(
             parent,
-            "RetroArch Auto-Save",
-            "RetroArch auto-save enabled. ✅"
+            "RetroArch Auto-Save States",
+            "✅ Auto save/load states enabled in retroarch.cfg."
         )
 
 def check_ppsspp_assets(ra_exe_path, parent):
@@ -249,6 +265,36 @@ class SettingsDialog(QDialog):
         self.auto_pull_btn.toggled.connect(self.toggle_auto_pull)
         self.settings_layout.addWidget(self.auto_pull_btn)
         
+        # Cards per row setting
+        cards_row_layout = QHBoxLayout()
+        cards_row_layout.addWidget(QLabel("Cards per row:"))
+        self.cards_per_row_spin = QSpinBox()
+        self.cards_per_row_spin.setMinimum(1)
+        self.cards_per_row_spin.setMaximum(12)
+        self.cards_per_row_spin.setValue(self.config.get("cards_per_row", 6))
+        self.cards_per_row_spin.valueChanged.connect(self.set_cards_per_row)
+        cards_row_layout.addWidget(self.cards_per_row_spin)
+        cards_row_layout.addStretch()
+        self.settings_layout.addLayout(cards_row_layout)
+        
+        # RetroArch save mode
+        self.settings_layout.addWidget(QLabel("<b>RetroArch Save Mode:</b>"))
+        self.ra_save_mode_combo = QComboBox()
+        self.ra_save_mode_combo.addItems(["SRM only", "States only", "Both"])
+        mode_map = {"srm": "SRM only", "state": "States only", "both": "Both"}
+        current_mode = self.config.get("retroarch_save_mode", "srm")
+        self.ra_save_mode_combo.setCurrentText(mode_map.get(current_mode, "SRM only"))
+        self.ra_save_mode_combo.currentTextChanged.connect(self.set_ra_save_mode)
+        self.settings_layout.addWidget(self.ra_save_mode_combo)
+
+        tooltip = QLabel(
+            "<small style='color:#888;'>SRM: classic battery saves. "
+            "States: faster, works for all cores. "
+            "Both: sync whichever changed.</small>"
+        )
+        tooltip.setWordWrap(True)
+        self.settings_layout.addWidget(tooltip)
+        
         self.settings_layout.addWidget(QLabel("<b>Preferred Switch Emulator:</b>"))
         self.switch_pref = QComboBox()
         self.switch_pref.addItems(["Switch (Eden)", "Switch (Yuzu)"])
@@ -317,6 +363,15 @@ class SettingsDialog(QDialog):
     def toggle_auto_pull(self, checked):
         self.config.set("auto_pull_saves", checked)
         self.auto_pull_btn.setText("Auto Pull Saves: ON" if checked else "Auto Pull Saves: OFF")
+
+    def set_cards_per_row(self, value):
+        self.config.set("cards_per_row", value)
+        lib = self.main_window.library_tab
+        lib._resize_all_cards()
+
+    def set_ra_save_mode(self, text):
+        mode_map = {"SRM only": "srm", "States only": "state", "Both": "both"}
+        self.config.set("retroarch_save_mode", mode_map.get(text, "srm"))
 
     def set_switch_pref(self, val):
         prefs = self.config.get("preferred_emulators", {})
@@ -538,7 +593,7 @@ class GameDetailDialog(QDialog):
             args = []
             if emu_display_name and "RetroArch" in emu_display_name:
                 # Once-per-session auto-save prompt
-                check_retroarch_autosave(emu_data["path"], platform, self)
+                check_retroarch_autosave(emu_data["path"], platform, self, self.config)
 
                 core_name = RETROARCH_CORES.get(platform)
 
@@ -579,16 +634,15 @@ class GameDetailDialog(QDialog):
             rom_id = self.game['id']
             title = self.game['name']
             full_cmd = f"\"{emu_data['path']}\" \"{local_rom}\""
-            save_path = watcher.resolve_save_path(emu_display_name, title, full_cmd, emu_data['path'], platform)
+            res = watcher.resolve_save_path(emu_display_name, title, full_cmd, emu_data['path'], platform)
             
-            if save_path:
+            if res:
+                save_path, is_folder = res
                 save_path = str(Path(save_path).resolve())
-                folder_platforms = ["switch", "nintendo-switch", "ps3", "playstation-3",
-                                    "wii", "nintendo-wii", "wiiu", "wii-u", "nintendo-wii-u",
-                                    "n3ds", "3ds", "nintendo-3ds"]
-                is_folder = platform in folder_platforms
-                if os.path.exists(save_path):
-                    is_folder = os.path.isdir(save_path)
+                
+                # Special marker for Dolphin GC card sync
+                if is_folder == "gc_card":
+                    is_folder = False # Do not treat Card A as a sync folder itself during pull
 
                 # Blocking sync with local event loop
                 loop = QEventLoop()
