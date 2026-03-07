@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import logging
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QScrollArea, QFormLayout, 
                              QLineEdit, QFileDialog, QMessageBox,
@@ -142,7 +143,8 @@ class EmulatorEditDialog(QDialog):
             "platform_slugs": slugs,
             "save_resolution": save_res,
             "user_defined": True,
-            "sync_enabled": True
+            "sync_enabled": True,
+            "conflict_behavior": "ask"
         }
         self.result_data = new_data
         self.accept()
@@ -322,28 +324,16 @@ class SyncSettingsWidget(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         
         layout.addWidget(QLabel("<h2>Emulator Save Sync</h2>"))
-        layout.addWidget(QLabel("<p style='color:#888;'>Choose which emulators sync saves to RomM.</p>"))
+        layout.addWidget(QLabel("<p style='color:#888;'>Choose which emulators sync saves to RomM and set conflict behavior.</p>"))
         self.emu_sync_layout = QVBoxLayout()
         self.emu_sync_layout.setAlignment(Qt.AlignTop)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(200)
+        scroll.setMinimumHeight(250)
         container = QWidget()
         container.setLayout(self.emu_sync_layout)
         scroll.setWidget(container)
         layout.addWidget(scroll)
-        
-        layout.addSpacing(20)
-        layout.addWidget(QLabel("<h2>Conflict Resolution</h2>"))
-        self.conflict_combo = QComboBox()
-        self.conflict_combo.addItem("Always Ask", "ask")
-        self.conflict_combo.addItem("Prefer Cloud Save", "prefer_cloud")
-        self.conflict_combo.addItem("Prefer Local Save", "prefer_local")
-        behavior = self.config.get("conflict_behavior", "ask")
-        idx = self.conflict_combo.findData(behavior)
-        if idx >= 0: self.conflict_combo.setCurrentIndex(idx)
-        self.conflict_combo.currentIndexChanged.connect(self.save_conflict_behavior)
-        layout.addWidget(self.conflict_combo)
         
         layout.addSpacing(20)
         layout.addWidget(QLabel("<h2>Auto-Sync Interval</h2>"))
@@ -361,32 +351,105 @@ class SyncSettingsWidget(QWidget):
         for i in reversed(range(self.emu_sync_layout.count())):
             item = self.emu_sync_layout.itemAt(i)
             if item and item.widget(): item.widget().setParent(None)
+        
+        # 1. Real emulators
         all_emus = emulators.load_emulators()
-        for emu in all_emus:
+        emu_data_list = []
+        for e in all_emus:
+            emu_data_list.append({
+                "id": e["id"],
+                "name": e["name"],
+                "sync_enabled": e.get("sync_enabled", True),
+                "conflict_behavior": e.get("conflict_behavior", "ask"),
+                "platform_slugs": e.get("platform_slugs", []),
+                "is_config_based": False
+            })
+            
+        # 2. Synthetic Windows Entry
+        emu_data_list.append({
+            "id": "windows_native",
+            "name": "Windows (Native)",
+            "sync_enabled": self.config.get("windows_sync_enabled", True),
+            "conflict_behavior": self.config.get("windows_conflict_behavior", "ask"),
+            "platform_slugs": ["windows"],
+            "is_config_based": True
+        })
+        
+        for emu in emu_data_list:
             row = QWidget()
             row.setStyleSheet("background: #252525; border-radius: 5px; margin: 2px;")
             rl = QHBoxLayout(row)
+            rl.setSpacing(8)
+            
             check = QCheckBox()
-            check.setChecked(emu.get("sync_enabled", True))
-            check.toggled.connect(lambda checked, eid=emu["id"]: self.toggle_emu_sync(eid, checked))
+            check.setFixedWidth(20)
+            check.setChecked(emu["sync_enabled"])
+            
+            name_label = QLabel(f"<b>{emu['name']}</b>")
+            name_label.setMinimumWidth(160)
+            
+            # Platform badges
+            badges_text = ", ".join(emu["platform_slugs"][:3]).upper()
+            badges = QLabel(badges_text)
+            badges.setStyleSheet("color: #888; font-size: 10px;")
+            
+            lbl_on = QLabel("On conflict:")
+            lbl_on.setStyleSheet("color: #888; font-size: 10px;")
+            lbl_on.setFixedWidth(65)
+            
+            conflict_combo = QComboBox()
+            conflict_combo.setFixedWidth(150)
+            conflict_combo.addItem("Always Ask", "ask")
+            conflict_combo.addItem("Prefer Cloud", "prefer_cloud")
+            conflict_combo.addItem("Prefer Local", "prefer_local")
+            
+            idx = conflict_combo.findData(emu["conflict_behavior"])
+            if idx >= 0: conflict_combo.setCurrentIndex(idx)
+            
+            # Connections
+            check.toggled.connect(lambda checked, e=emu, c=conflict_combo, nl=name_label: self.save_emu_sync(e, checked, c, nl))
+            conflict_combo.currentIndexChanged.connect(lambda idx, e=emu, c=conflict_combo: self.save_emu_conflict(e, c.itemData(idx)))
+            
+            # Initial state
+            conflict_combo.setEnabled(emu["sync_enabled"])
+            name_label.setEnabled(emu["sync_enabled"])
+            
             rl.addWidget(check)
-            rl.addWidget(QLabel(f"<b>{emu['name']}</b>"))
-            rl.addStretch()
+            rl.addWidget(name_label)
+            rl.addWidget(badges, 1)
+            rl.addWidget(lbl_on)
+            rl.addWidget(conflict_combo)
+            
             self.emu_sync_layout.addWidget(row)
 
-    def toggle_emu_sync(self, emu_id, enabled):
-        all_emus = emulators.load_emulators()
-        emu = next((e for e in all_emus if e["id"] == emu_id), None)
-        if emu:
-            emu["sync_enabled"] = enabled
-            emulators.save_emulators(all_emus)
-            self.main_window.log(f"🔄 Sync {'enabled' if enabled else 'disabled'} for {emu['name']}")
-            if emu_id == "windows_native": self.config.set("windows_sync_enabled", enabled)
+    def save_emu_sync(self, emu_data, enabled, combo, label):
+        combo.setEnabled(enabled)
+        label.setEnabled(enabled)
+        
+        if emu_data["is_config_based"]:
+            self.config.set("windows_sync_enabled", enabled)
+        else:
+            all_emus = emulators.load_emulators()
+            emu = next((e for e in all_emus if e["id"] == emu_data["id"]), None)
+            if emu:
+                emu["sync_enabled"] = enabled
+                emulators.save_emulators(all_emus)
+        
+        logging.info(f"🔄 Sync {'enabled' if enabled else 'disabled'} for {emu_data['name']}")
+        self.main_window.log(f"🔄 Sync {'enabled' if enabled else 'disabled'} for {emu_data['name']}")
 
-    def save_conflict_behavior(self, index):
-        val = self.conflict_combo.itemData(index)
-        self.config.set("conflict_behavior", val)
-        self.main_window.log(f"🔄 Conflict behavior set to: {self.conflict_combo.currentText()}")
+    def save_emu_conflict(self, emu_data, behavior):
+        if emu_data["is_config_based"]:
+            self.config.set("windows_conflict_behavior", behavior)
+        else:
+            all_emus = emulators.load_emulators()
+            emu = next((e for e in all_emus if e["id"] == emu_data["id"]), None)
+            if emu:
+                emu["conflict_behavior"] = behavior
+                emulators.save_emulators(all_emus)
+        
+        logging.info(f"⚙ {emu_data['name']} conflict behavior: {behavior}")
+        self.main_window.log(f"⚙ {emu_data['name']} conflict: {behavior}")
 
 class PlatformAssignWidget(QWidget):
     def __init__(self, main_window):

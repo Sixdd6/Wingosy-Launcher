@@ -1000,7 +1000,25 @@ class GameDetailDialog(QDialog):
             return True
             
         if local_exists and str(rom_id) in watcher.sync_cache and not self._conflict_shown:
-            behavior = self.config.get("conflict_behavior", "ask")
+            # Resolve conflict behavior
+            behavior = "ask"
+            if self._is_windows:
+                behavior = self.config.get("windows_conflict_behavior", "ask")
+            else:
+                # Try to find the emulator that would be used
+                all_emus = emulators.load_emulators()
+                assigned_id = self.config.get("platform_assignments", {}).get(self.game.get('platform_slug'))
+                emu = None
+                if assigned_id:
+                    emu = next((e for e in all_emus if e["id"] == assigned_id), None)
+                if not emu:
+                    emu = emulators.get_emulator_for_platform(self.game.get('platform_slug'))
+                if not emu:
+                    emu = next((e for e in all_emus if e["id"] == "retroarch"), None)
+                
+                if emu:
+                    behavior = emu.get("conflict_behavior", "ask")
+
             if behavior == "prefer_local":
                 if os.path.exists(tmp): os.remove(tmp)
                 return True
@@ -1053,6 +1071,23 @@ class GameDetailDialog(QDialog):
                 os.remove(tmp)
         return True
         
+    def _pull_windows_save(self, client, rom_id, save_dir):
+        """Helper to download and extract latest Windows save zip."""
+        try:
+            latest = client.get_latest_save(rom_id)
+            if not latest: return False
+            
+            import tempfile
+            tmp = tempfile.mktemp(suffix=".zip")
+            if client.download_save(latest, tmp):
+                os.makedirs(save_dir, exist_ok=True)
+                extract_strip_root(tmp, save_dir)
+                if os.path.exists(tmp): os.remove(tmp)
+                return True
+        except Exception as e:
+            logging.error(f"Failed to pull Windows save: {e}")
+        return False
+
     def play_game(self):
         if self._is_windows:
             folder = self._local_rom_path
@@ -1061,6 +1096,46 @@ class GameDetailDialog(QDialog):
                 self._update_button_states()
                 return
                 
+            # SMART PULL for Windows
+            save_dir = windows_saves.get_save_dir(self.game['id'])
+            if save_dir and self.config.get("windows_sync_enabled", True):
+                should_pull = False
+                reason = ""
+                p = Path(save_dir)
+                
+                # Check 1: Missing or empty
+                if not p.exists() or not any(p.iterdir()):
+                    should_pull, reason = True, "local save folder is empty"
+                else:
+                    # Check 2: Remote is newer
+                    remote = self.client.get_latest_save(self.game['id'])
+                    if remote:
+                        remote_ts = remote.get("updated_at", "")
+                        local_mtime = max((f.stat().st_mtime for f in p.rglob("*") if f.is_file()), default=0)
+                        from datetime import datetime
+                        try:
+                            remote_dt = datetime.fromisoformat(remote_ts.replace("Z", "+00:00"))
+                            if remote_dt.timestamp() > local_mtime:
+                                should_pull, reason = True, "cloud save is newer"
+                        except Exception:
+                            should_pull, reason = True, "could not compare timestamps"
+                
+                if should_pull:
+                    behavior = self.config.get("windows_conflict_behavior", "ask")
+                    if behavior == "prefer_local":
+                        should_pull = False
+                    elif behavior == "prefer_cloud":
+                        if self._pull_windows_save(self.client, self.game['id'], save_dir):
+                            self.main_window.log(f"☁️ Pulled save ({reason})")
+                    else:
+                        # "ask"
+                        res = QMessageBox.question(self, "Cloud Save Found", 
+                            f"A newer cloud save was found ({reason}).\n\nWould you like to download it now?",
+                            QMessageBox.Yes | QMessageBox.No)
+                        if res == QMessageBox.Yes:
+                            if self._pull_windows_save(self.client, self.game['id'], save_dir):
+                                self.main_window.log(f"☁️ Pulled save ({reason})")
+
             saved = windows_saves.get_windows_save(self.game['id'])
             default_exe = saved.get("default_exe") if saved else None
             
@@ -1081,8 +1156,6 @@ class GameDetailDialog(QDialog):
                         return
                         
             if exe_to_launch:
-                if self.config.get("auto_pull_saves", True) and not self._do_blocking_pull(None, False):
-                    return
                 try:
                     self.main_window.log(f"🚀 Launching Windows Game: {os.path.basename(exe_to_launch)}")
                     proc = subprocess.Popen([exe_to_launch], cwd=os.path.dirname(exe_to_launch))

@@ -16,7 +16,8 @@ DEFAULT_EMULATORS = [
             "state_dir": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "eden",
@@ -29,7 +30,8 @@ DEFAULT_EMULATORS = [
             "path": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "rpcs3",
@@ -42,7 +44,8 @@ DEFAULT_EMULATORS = [
             "path": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "dolphin",
@@ -55,7 +58,8 @@ DEFAULT_EMULATORS = [
             "path": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "pcsx2",
@@ -68,7 +72,8 @@ DEFAULT_EMULATORS = [
             "path": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "cemu",
@@ -81,7 +86,8 @@ DEFAULT_EMULATORS = [
             "path": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "azahar",
@@ -94,7 +100,8 @@ DEFAULT_EMULATORS = [
             "path": ""
         },
         "user_defined": False,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     },
     {
         "id": "windows_native",
@@ -107,7 +114,8 @@ DEFAULT_EMULATORS = [
         },
         "user_defined": False,
         "is_native": True,
-        "sync_enabled": True
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
     }
 ]
 
@@ -132,10 +140,12 @@ def load_emulators_raw():
                 if not (e.get("id", "").lower() == "yuzu" or "yuzu" in e.get("name", "").lower())
             ]
             
-            # Ensure sync_enabled exists for all
+            # Ensure sync_enabled and conflict_behavior exists for all
             for e in data["emulators"]:
                 if "sync_enabled" not in e:
                     e["sync_enabled"] = True
+                if "conflict_behavior" not in e:
+                    e["conflict_behavior"] = "ask"
             
             if len(data["emulators"]) < initial_count:
                 logging.info("Removed deprecated Yuzu entry from emulators")

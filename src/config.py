@@ -24,6 +24,7 @@ class ConfigManager:
         "device_id": "wingosy-win-default",
         "windows_games_dir": "",
         "windows_sync_enabled": True,
+        "windows_conflict_behavior": "ask",
         "conflict_behavior": "ask",
         "sync_interval_seconds": 120,
         "pcgamingwiki_enabled": True,
