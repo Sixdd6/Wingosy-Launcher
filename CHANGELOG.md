@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.5.5
+### Critical Fixes
+- Fixed app crash on restart (certifi TLS path after MEI cleanup)
+- Fixed restart not launching new process on Windows
+- Fixed platform filter resetting after any UI action
+- Fixed false connection failure banner on startup
+- Fixed stdout/stderr crash when running as frozen exe
+- Fixed PSP state never syncing when SAVEDATA unchanged
+- Fixed upload_state going to wrong endpoint
+- Fixed save conflict dialog appearing after emulator launched
+
+### New Features
+- RetroArch dual sync: SRM + savestate on every session
+- PSP full sync: SAVEDATA folder + state file
+- Cloud pull blocks before emulator launches
+- Live connection tests added to test suite
+- File logging to ~/.wingosy/app.log for diagnostics
+
 ## v0.5.4
 ### New Features
 - RetroArch dual save sync: SRM + savestate synced on every session for all RetroArch cores
