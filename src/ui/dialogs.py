@@ -10,13 +10,13 @@ from pathlib import Path
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
                              QLabel, QLineEdit, QPushButton, QDialogButtonBox, 
                              QMessageBox, QProgressBar, QComboBox, QFileDialog, 
-                             QSizePolicy, QApplication, QWidget, QSpinBox)
+                             QSizePolicy, QApplication, QWidget, QSpinBox, QScrollArea)
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QEventLoop
 from PySide6.QtGui import QPixmap, QDesktopServices
 
 from src.ui.threads import (UpdaterThread, SelfUpdateThread,
-                             ConnectionTestThread, RomDownloader, CoreDownloadThread, ImageFetcher, ConflictResolveThread)
-from src.ui.widgets import format_speed, get_resource_path
+                             ConnectionTestThread, RomDownloader, CoreDownloadThread, ImageFetcher, ConflictResolveThread, GameDescriptionFetcher)
+from src.ui.widgets import format_speed, format_size, get_resource_path
 from src.platforms import RETROARCH_PLATFORMS, RETROARCH_CORES, platform_matches
 from src.utils import read_retroarch_cfg, write_retroarch_cfg_values
 
@@ -567,72 +567,171 @@ class GameDetailDialog(QDialog):
         super().__init__(parent)
         self.game, self.client, self.config, self.main_window = game, client, config, main_window
         self.setWindowTitle(game.get("name"))
-        self.resize(500, 450)
+        self.setFixedSize(800, 550)
         self.dl_thread = None
         self._conflict_shown = False
-        layout = QVBoxLayout(self)
-        info_layout = QHBoxLayout()
+        self._local_rom_path = self._get_local_rom_path()
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Title (Top)
+        title_label = QLabel(game.get('name'))
+        title_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #1e88e5;")
+        title_label.setWordWrap(True)
+        main_layout.addWidget(title_label)
+        
+        # Content layout (Cover | Metadata)
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(25)
+        
+        # Left: Cover Image (300px wide)
         self.img_label = QLabel()
-        self.img_label.setFixedSize(200, 280)
-        info_layout.addWidget(self.img_label)
-        url = client.get_cover_url(game)
-        if url:
-            from src.ui.threads import ImageFetcher
-            self.img_fetch_thread = ImageFetcher(game['id'], url)
-            self.img_fetch_thread.finished.connect(lambda g, p: self.img_label.setPixmap(p.scaled(200, 280)))
-            self.img_fetch_thread.finished.connect(lambda t=self.img_fetch_thread: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
-            self.main_window.active_threads.append(self.img_fetch_thread)
-            self.img_fetch_thread.start()
+        self.img_label.setFixedWidth(300)
+        self.img_label.setAlignment(Qt.AlignCenter)
+        self.img_label.setStyleSheet("background: #1a1a1a; border-radius: 6px;")
+        content_layout.addWidget(self.img_label)
         
-        detail_layout = QVBoxLayout()
-        detail_layout.addWidget(QLabel(f"<h2>{game.get('name')}</h2>"))
-        detail_layout.addWidget(QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}"))
+        # Right Column: Metadata + Description + Action Buttons
+        right_column = QVBoxLayout()
+        right_column.setSpacing(0) # Remove default spacing
         
-        # Playtime display
-        playtime_path = Path.home() / ".wingosy" / "playtime.json"
-        playtime_str = "Never played"
-        if playtime_path.exists():
-            try:
-                import json
-                with open(playtime_path, 'r') as f:
-                    playtime_data = json.load(f)
-                total_min = playtime_data.get(str(game['id']), 0)
-                if total_min > 0:
-                    hours = int(total_min // 60)
-                    minutes = int(total_min % 60)
-                    playtime_str = f"{hours}h {minutes}m"
-            except Exception: pass
-        detail_layout.addWidget(QLabel(f"🕐 <b>Playtime:</b> {playtime_str}"))
-
+        platform_label = QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}")
+        platform_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px;")
+        right_column.addWidget(platform_label)
+        
+        # Size
+        total_bytes = 0
+        for f in game.get('files', []):
+            total_bytes += f.get('file_size_bytes', 0)
+        size_str = format_size(total_bytes)
+        size_label = QLabel(f"<b>Size:</b> {size_str}")
+        size_label.setStyleSheet("font-size: 12pt; margin-bottom: 8px;")
+        right_column.addWidget(size_label)
+        
+        # Description scroll area
+        self.desc_scroll = QScrollArea()
+        self.desc_scroll.setWidgetResizable(True)
+        self.desc_scroll.setStyleSheet("background: transparent; border: none;")
+        self.desc_label = QLabel("Loading description...")
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setAlignment(Qt.AlignTop)
+        self.desc_label.setStyleSheet("color: #ccc; font-size: 11pt; line-height: 1.4;")
+        self.desc_scroll.setWidget(self.desc_label)
+        right_column.addWidget(self.desc_scroll, 1) # Give it stretch factor 1
+        
+        # Progress area (for downloads)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        right_column.addWidget(self.progress_bar)
+        self.speed_label = QLabel()
+        self.speed_label.setAlignment(Qt.AlignCenter)
+        right_column.addWidget(self.speed_label)
+        
+        # Action Buttons Container (Minimized spacing)
+        actions_layout = QVBoxLayout()
+        actions_layout.setContentsMargins(0, 5, 0, 0) # Tight to description
+        actions_layout.setSpacing(4) # Very small margin between buttons
+        
         self.play_btn = QPushButton("▶ PLAY")
-        self.play_btn.setStyleSheet("background: #1e88e5; color: white; font-weight: bold; padding: 10px; font-size: 14pt;")
+        self.play_btn.setStyleSheet("background: #2e7d32; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         self.play_btn.clicked.connect(self.play_game)
-        detail_layout.addWidget(self.play_btn)
-
-        files = game.get('files', [])
-        self.dl_btn = QPushButton("Download ROM")
-        self.dl_btn.setStyleSheet("background: #1565c0; color: white; padding: 8px;")
-        self.dl_btn.setVisible(len(files) > 0)
-        self.dl_btn.clicked.connect(lambda: self.download_rom(files[0]))
-        detail_layout.addWidget(self.dl_btn)
+        
+        self.uninstall_btn = QPushButton("🗑 Uninstall")
+        self.uninstall_btn.setStyleSheet("background: #8e0000; color: white; padding: 6px; font-size: 11pt;")
+        self.uninstall_btn.clicked.connect(self.uninstall_game)
+        
+        self.dl_btn = QPushButton("⬇ DOWNLOAD")
+        self.dl_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
+        self.dl_btn.clicked.connect(self._on_download_clicked)
         
         self.cancel_btn = QPushButton("Cancel Download")
         self.cancel_btn.setStyleSheet("background: #c62828; color: white;")
         self.cancel_btn.setVisible(False)
         self.cancel_btn.clicked.connect(self.cancel_dl)
-        detail_layout.addWidget(self.cancel_btn)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        detail_layout.addWidget(self.progress_bar)
-        self.speed_label = QLabel()
-        detail_layout.addWidget(self.speed_label)
         
-        info_layout.addLayout(detail_layout)
-        layout.addLayout(info_layout)
-        button_box = QDialogButtonBox(QDialogButtonBox.Close, self)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
+        actions_layout.addWidget(self.play_btn)
+        actions_layout.addWidget(self.uninstall_btn)
+        actions_layout.addWidget(self.dl_btn)
+        actions_layout.addWidget(self.cancel_btn)
+        
+        right_column.addLayout(actions_layout)
+        
+        content_layout.addLayout(right_column, 1)
+        main_layout.addLayout(content_layout)
+        
+        # Close button (Bottom, spans full width)
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet("background: #333; color: #ccc; padding: 8px; font-size: 12pt;")
+        close_btn.clicked.connect(self.reject)
+        main_layout.addWidget(close_btn)
+        
+        # Fetch data
+        self._update_button_states()
+        self._start_image_fetch()
+        self._start_desc_fetch()
+
+    def _get_local_rom_path(self):
+        platform = self.game.get('platform_slug')
+        base_rom = self.config.get("base_rom_path")
+        rom_name = self.game.get('fs_name')
+        if not rom_name: return None
+        return Path(base_rom) / platform / rom_name
+
+    def _update_button_states(self):
+        exists = self._local_rom_path and self._local_rom_path.exists()
+        # If not in the platform subfolder, check root
+        if not exists:
+            base_rom = self.config.get("base_rom_path")
+            rom_name = self.game.get('fs_name')
+            if rom_name:
+                root_path = Path(base_rom) / rom_name
+                if root_path.exists():
+                    self._local_rom_path = root_path
+                    exists = True
+        
+        self.play_btn.setVisible(exists)
+        self.uninstall_btn.setVisible(exists)
+        self.dl_btn.setVisible(not exists)
+
+    def _start_image_fetch(self):
+        url = self.client.get_cover_url(self.game)
+        if url:
+            self.img_fetch_thread = ImageFetcher(self.game['id'], url)
+            self.img_fetch_thread.finished.connect(self._on_image_loaded)
+            self.img_fetch_thread.finished.connect(lambda t=self.img_fetch_thread: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
+            self.main_window.active_threads.append(self.img_fetch_thread)
+            self.img_fetch_thread.start()
+
+    def _on_image_loaded(self, gid, pixmap):
+        self.img_label.setPixmap(pixmap.scaled(300, 420, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _start_desc_fetch(self):
+        self.desc_thread = GameDescriptionFetcher(self.client, self.game['id'])
+        self.desc_thread.finished.connect(self.desc_label.setText)
+        self.desc_thread.finished.connect(lambda t=self.desc_thread: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
+        self.main_window.active_threads.append(self.desc_thread)
+        self.desc_thread.start()
+
+    def uninstall_game(self):
+        reply = QMessageBox.question(self, "Uninstall", 
+            f"Are you sure you want to delete {self.game.get('name')} from your device?\n\nCloud saves are not affected.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            try:
+                if self._local_rom_path.exists():
+                    os.remove(self._local_rom_path)
+                    QMessageBox.information(self, "Success", "Game uninstalled.")
+                    self._update_button_states()
+                    # Refresh library tab indicators
+                    self.main_window.library_tab.apply_filters()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete file: {e}")
+
+    def _on_download_clicked(self):
+        files = self.game.get('files', [])
+        if files:
+            self.download_rom(files[0])
 
     def _do_blocking_pull(self, save_info, is_retroarch):
         """
@@ -791,7 +890,6 @@ class GameDetailDialog(QDialog):
                 # Zip handling
                 if os.path.exists(local_path) and is_folder:
                     # For PSP folders, we might want to merge or clear. 
-                    # RomM saves are usually the content of SAVEDATA.
                     pass
                 os.makedirs(local_path, exist_ok=True)
                 with zipfile.ZipFile(tmp, 'r') as z:
@@ -831,19 +929,10 @@ class GameDetailDialog(QDialog):
         base_rom = self.config.get("base_rom_path")
         rom_name = self.game.get('fs_name')
         
-        local_rom = Path(base_rom) / platform / rom_name
-        if not local_rom.exists():
-            local_rom = Path(base_rom) / rom_name
-            if not local_rom.exists():
-                found = False
-                for root, dirs, files in os.walk(base_rom):
-                    if rom_name in files:
-                        local_rom = Path(root) / rom_name
-                        found = True
-                        break
-                if not found:
-                    QMessageBox.warning(self, "ROM Not Found", f"Could not find {rom_name} in {base_rom}.\nPlease download it first.")
-                    return
+        local_rom = self._local_rom_path
+        if not local_rom or not local_rom.exists():
+            QMessageBox.warning(self, "ROM Not Found", f"Could not find {rom_name} in {base_rom}.\nPlease download it first.")
+            return
 
         emu_data = None
         emu_display_name = None
@@ -1011,10 +1100,11 @@ class GameDetailDialog(QDialog):
             self.on_download_complete(False, "Cancelled")
 
     def on_download_complete(self, ok, path):
-        self.dl_btn.setVisible(True)
+        self._local_rom_path = Path(path) if ok else self._get_local_rom_path()
         self.cancel_btn.setVisible(False)
         self.progress_bar.setVisible(False)
         self.speed_label.setText("")
+        self._update_button_states()
         if ok:
             QMessageBox.information(self, "Success", f"Downloaded to {path}")
             self.main_window.fetch_library_and_populate() # Refresh to update indicators

@@ -248,6 +248,15 @@ class DummyRomMClient:
     def get_firmware(self):
         return []
 
+    def get_rom_details(self, rom_id):
+        return {
+            "id": rom_id,
+            "name": f"Dummy Game {rom_id}",
+            "platform_display_name": "SNES",
+            "igdb_metadata": {"summary": "A long and detailed dummy summary for this game."},
+            "files": [{"file_name": "game.sfc", "file_size_bytes": 1024*1024}]
+        }
+
     def download_firmware(self, fw_item, target_path,
                           progress_cb=None, thread=None):
         return False

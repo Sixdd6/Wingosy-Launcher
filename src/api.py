@@ -270,6 +270,21 @@ class RomMClient:
         print(f"[Library] Parallel fetch complete: {len(all_items)} games.")
         return all_items
 
+    def get_rom_details(self, rom_id):
+        """Fetch detailed information for a single ROM."""
+        url = f"{self.host}/api/roms/{rom_id}"
+        try:
+            r = requests.get(url, headers=self.get_auth_headers(), 
+                             timeout=REQUEST_TIMEOUT, verify=CERTIFI_PATH)
+            if r.status_code == 200:
+                rom_data = r.json()
+                logging.debug(f"ROM detail raw for {rom_id}: {json.dumps(rom_data, indent=2)}")
+                return rom_data
+            return None
+        except Exception as e:
+            print(f"[API] Error fetching ROM details for {rom_id}: {e}")
+            return None
+
     def get_cover_url(self, game):
         """Returns a valid URL for the game cover, preferring local RomM assets."""
         path = game.get('path_cover_large') or game.get('path_cover_small') 

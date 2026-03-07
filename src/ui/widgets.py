@@ -19,6 +19,11 @@ def format_speed(bytes_per_sec):
         return f"{bytes_per_sec/(1024*1024):.1f} MB/s"
     return f"{bytes_per_sec/1024:.1f} KB/s"
 
+def format_size(bytes_count):
+    if bytes_count > 1024*1024*1024:
+        return f"{bytes_count/(1024*1024*1024):.2f} GB"
+    return f"{bytes_count/(1024*1024):.1f} MB"
+
 def elide_text(text, max_chars=24):
     return text if len(text) <= max_chars else text[:max_chars].rstrip() + "…"
 

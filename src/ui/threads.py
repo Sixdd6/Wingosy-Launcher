@@ -33,6 +33,32 @@ class ImageFetcher(QThread):
         except Exception:
             pass
 
+class GameDescriptionFetcher(QThread):
+    finished = Signal(str)
+    def __init__(self, client, rom_id):
+        super().__init__()
+        self.client = client
+        self.rom_id = rom_id
+    def run(self):
+        try:
+            rom = self.client.get_rom_details(self.rom_id)
+            if not rom:
+                self.finished.emit("No description available.")
+                return
+            
+            # Order of preference for description
+            summary = (
+                rom.get("summary") or 
+                rom.get("description") or 
+                rom.get("igdb_metadata", {}).get("summary") or 
+                rom.get("moby_metadata", {}).get("summary") or 
+                rom.get("ss_metadata", {}).get("summary")
+            )
+            
+            self.finished.emit(summary or "No description available.")
+        except Exception:
+            self.finished.emit("No description available.")
+
 class BaseDownloader(QThread):
     progress = Signal(int, float)
     finished = Signal(bool, str)
