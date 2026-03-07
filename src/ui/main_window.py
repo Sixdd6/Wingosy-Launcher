@@ -118,7 +118,7 @@ class WingosyMainWindow(QMainWindow):
         self.tabs.addTab(self.library_tab, "🎮 Library")
         
         self.emulators_tab = EmulatorsTab(self)
-        self.tabs.addTab(self.emulators_tab, "🛠️ Emulators")
+        self.tabs.addTab(self.emulators_tab, "🎮 Emulators")
         
         # Logs & Downloads Tab
         self.info_tabs = QTabWidget()

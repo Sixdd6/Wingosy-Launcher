@@ -65,6 +65,39 @@ def zip_path(source_path, output_zip):
         else:
             zf.write(source, source.name)
 
+def extract_strip_root(zip_path, dest_dir, progress_cb=None):
+    """
+    Extract a ZIP file to dest_dir, stripping common root folder if it exists.
+    """
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        members = zf.namelist()
+        if not members: return
+        
+        # Detect common root prefix
+        first = members[0]
+        root = first.split('/')[0] + '/'
+        all_have_root = all(m.startswith(root) for m in members)
+        
+        total = len(members)
+        for i, member in enumerate(members):
+            if all_have_root:
+                rel = member[len(root):]
+            else:
+                rel = member
+            
+            if not rel: continue
+            
+            target = Path(dest_dir) / rel
+            if member.endswith('/'):
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member) as src, open(target, 'wb') as dst:
+                    dst.write(src.read())
+            
+            if progress_cb:
+                progress_cb(int((i + 1) / total * 100))
+
 def read_retroarch_cfg(cfg_path):
     """
     Parse a retroarch.cfg file into a dict.

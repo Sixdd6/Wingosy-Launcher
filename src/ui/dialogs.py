@@ -16,11 +16,13 @@ from PySide6.QtCore import Qt, Signal, QThread, QTimer, QEventLoop
 from PySide6.QtGui import QPixmap, QDesktopServices, QFont, QFontMetrics
 
 from src.ui.threads import (UpdaterThread, SelfUpdateThread,
-                             ConnectionTestThread, RomDownloader, CoreDownloadThread, ImageFetcher, ConflictResolveThread, GameDescriptionFetcher, ExtractionThread, WikiFetcherThread)
+                             ConnectionTestThread, RomDownloader, CoreDownloadThread, 
+                             ImageFetcher, ConflictResolveThread, GameDescriptionFetcher, 
+                             ExtractionThread, WikiFetcherThread)
 from src.ui.widgets import format_speed, format_size, get_resource_path
 from src.platforms import RETROARCH_PLATFORMS, RETROARCH_CORES, platform_matches
 from src import emulators, windows_saves
-from src.utils import read_retroarch_cfg, write_retroarch_cfg_values, zip_path
+from src.utils import read_retroarch_cfg, write_retroarch_cfg_values, zip_path, extract_strip_root
 
 _retroarch_autosave_checked = False
 _ppsspp_assets_checked = False
@@ -37,61 +39,43 @@ EXCLUDED_EXES = [
 ]
 
 def check_retroarch_autosave(ra_exe_path, platform_slug, parent, config=None):
-    """
-    Check retroarch.cfg and prompt user to enable auto save/load if needed.
-    Only prompts when save mode includes states (state or both).
-    PSP is always skipped.
-    Fires at most once per app session.
-    """
     global _retroarch_autosave_checked
     if _retroarch_autosave_checked:
         return
     _retroarch_autosave_checked = True
-
-    # PSP always uses SAVEDATA folder sync — states not applicable
+    
     if platform_slug in ("psp", "playstation-portable"):
         return
-
-    # Only relevant when the user wants state-based saving
+        
     save_mode = config.get("retroarch_save_mode", "srm") if config else "srm"
     if save_mode == "srm":
-        return  # SRM-only mode doesn't need savestates enabled
-
+        return
+        
     cfg_path = Path(ra_exe_path).parent / "retroarch.cfg"
     if not cfg_path.exists():
         return
-
+        
     cfg = read_retroarch_cfg(str(cfg_path))
     auto_save = cfg.get("savestate_auto_save", "false")
     auto_load = cfg.get("savestate_auto_load", "false")
-
+    
     if auto_save == "true" and auto_load == "true":
-        return  # already good
-
+        return
+        
     missing = []
     if auto_save != "true": missing.append("savestate_auto_save")
     if auto_load != "true": missing.append("savestate_auto_load")
-
+    
     result = QMessageBox.question(
-        parent,
-        "RetroArch Auto-Save States",
-        f"Your RetroArch save mode is set to '{save_mode}' but auto save/load "
-        f"states are disabled in retroarch.cfg.\n\n"
-        f"Disabled: {', '.join(missing)}\n\n"
-        f"Would you like Wingosy to enable them automatically?\n"
-        f"(Writes to: {cfg_path})",
+        parent, 
+        "RetroArch Auto-Save States", 
+        f"Enable auto save/load states in retroarch.cfg?\n\nMissing: {', '.join(missing)}", 
         QMessageBox.Yes | QMessageBox.No
     )
+    
     if result == QMessageBox.Yes:
-        write_retroarch_cfg_values(str(cfg_path), {
-            "savestate_auto_save": "true",
-            "savestate_auto_load": "true"
-        })
-        QMessageBox.information(
-            parent,
-            "RetroArch Auto-Save States",
-            "✅ Auto save/load states enabled in retroarch.cfg."
-        )
+        write_retroarch_cfg_values(str(cfg_path), {"savestate_auto_save": "true", "savestate_auto_load": "true"})
+        QMessageBox.information(parent, "RetroArch Auto-Save States", "✅ Auto save/load states enabled.")
 
 def check_ppsspp_assets(ra_exe_path, parent):
     global _ppsspp_assets_checked
@@ -100,62 +84,51 @@ def check_ppsspp_assets(ra_exe_path, parent):
     _ppsspp_assets_checked = True
     
     system_ppsspp = Path(ra_exe_path).parent / "system" / "PPSSPP"
-    zim_path = system_ppsspp / "ppge_atlas.zim"
-    if zim_path.exists():
+    if (system_ppsspp / "ppge_atlas.zim").exists():
         return
-    
+        
     result = QMessageBox.question(
-        parent,
-        "PPSSPP Assets Missing",
-        "PPSSPP requires asset files to run correctly.\n\n"
-        "ppge_atlas.zim is missing from:\n"
-        f"{system_ppsspp}\n\n"
-        "Would you like Wingosy to download them now?\n"
-        "(~2MB from buildbot.libretro.com)",
+        parent, 
+        "PPSSPP Assets Missing", 
+        "Download missing PPSSPP assets now?", 
         QMessageBox.Yes | QMessageBox.No
     )
+    
     if result != QMessageBox.Yes:
         return
-    
+        
     progress = QMessageBox(parent)
     progress.setWindowTitle("Downloading PPSSPP Assets")
-    progress.setText("Downloading PPSSPP assets...\nPlease wait.")
-    progress.setStandardButtons(QMessageBox.NoButton)
+    progress.setText("Downloading...")
     progress.show()
     QApplication.processEvents()
     
     try:
-        import urllib.request, zipfile, tempfile
+        import urllib.request, tempfile
         url = "https://buildbot.libretro.com/assets/system/PPSSPP.zip"
         system_ppsspp.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(suffix=".zip",
-                                         delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
             tmp_path = tmp.name
+        
         urllib.request.urlretrieve(url, tmp_path)
         with zipfile.ZipFile(tmp_path, 'r') as z:
             for member in z.namelist():
-                relative = member
-                if relative.startswith("PPSSPP/"):
-                    relative = relative[len("PPSSPP/"):]
-                if not relative:
-                    continue
-                target = system_ppsspp / relative
+                rel = member[len("PPSSPP/"):] if member.startswith("PPSSPP/") else member
+                if not rel: continue
+                target = system_ppsspp / rel
                 if member.endswith("/"):
                     target.mkdir(parents=True, exist_ok=True)
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    with z.open(member) as src, \
-                         open(target, 'wb') as dst:
+                    with z.open(member) as src, open(target, 'wb') as dst:
                         dst.write(src.read())
+        
         Path(tmp_path).unlink(missing_ok=True)
         progress.close()
-        QMessageBox.information(parent, "PPSSPP Assets Ready",
-            "PPSSPP assets downloaded successfully. ✅")
+        QMessageBox.information(parent, "PPSSPP Assets Ready", "✅ Done.")
     except Exception as e:
         progress.close()
-        QMessageBox.warning(parent, "Download Failed",
-            f"Could not download PPSSPP assets:\n{e}\n\n"
-            f"You can manually place them in:\n{system_ppsspp}")
+        QMessageBox.warning(parent, "Download Failed", str(e))
 
 class WelcomeDialog(QDialog):
     def __init__(self, parent=None):
@@ -164,25 +137,14 @@ class WelcomeDialog(QDialog):
         self.resize(500, 350)
         layout = QVBoxLayout(self)
         
-        title = QLabel("<h1>Welcome to Wingosy!</h1>")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-        
-        info = QLabel(
-            "<p style='font-size: 12pt;'>Your setup is almost complete. Follow these steps to get started:</p>"
-            "<ol style='font-size: 11pt;'>"
-            "<li><b>Step 1:</b> Enter your RomM server URL and credentials (done!).</li>"
-            "<li><b>Step 2:</b> Go to the <b>Emulators</b> tab to set your ROM and Emulator paths.</li>"
-            "<li><b>Step 3:</b> Click any game in your library and hit <b>PLAY</b>. Wingosy handles the rest!</li>"
-            "</ol>"
-            "<p>Happy gaming!</p>"
-        )
+        layout.addWidget(QLabel("<h1>Welcome to Wingosy!</h1>"))
+        info = QLabel("<p style='font-size: 12pt;'>Your setup is almost complete. Follow the tabs to get started.</p>")
         info.setWordWrap(True)
         layout.addWidget(info)
-        
         layout.addStretch()
+        
         btn = QPushButton("Get Started")
-        btn.setStyleSheet("background: #1e88e5; color: white; font-weight: bold; padding: 10px;")
+        btn.setStyleSheet("background: #1e88e5; color: white; padding: 10px;")
         btn.clicked.connect(self.accept)
         layout.addWidget(btn)
 
@@ -193,32 +155,19 @@ class ConflictDialog(QDialog):
         self.resize(450, 200)
         layout = QVBoxLayout(self)
         
-        msg = QLabel(
-            f"Both local and cloud saves exist for <b>{title}</b>, and they differ.<br><br>"
-            "Which one would you like to use?"
-        )
-        msg.setWordWrap(True)
-        layout.addWidget(msg)
-        
+        layout.addWidget(QLabel(f"Conflict found for <b>{title}</b>. Which save would you like to use?"))
         layout.addStretch()
+        
         btn_layout = QHBoxLayout()
+        self.result_mode = None
         
-        self.result_mode = None # "cloud", "local", "both"
-        
-        cloud_btn = QPushButton("☁️ Use Cloud")
-        cloud_btn.clicked.connect(lambda: self.finish("cloud"))
-        btn_layout.addWidget(cloud_btn)
-        
-        local_btn = QPushButton("💾 Keep Local")
-        local_btn.clicked.connect(lambda: self.finish("local"))
-        btn_layout.addWidget(local_btn)
-        
-        both_btn = QPushButton("📁 Keep Both")
-        both_btn.clicked.connect(lambda: self.finish("both"))
-        btn_layout.addWidget(both_btn)
-        
+        for mode, text in [("cloud", "☁️ Use Cloud"), ("local", "💾 Keep Local"), ("both", "📁 Keep Both")]:
+            btn = QPushButton(text)
+            btn.clicked.connect(lambda checked, m=mode: self.finish(m))
+            btn_layout.addWidget(btn)
+            
         layout.addLayout(btn_layout)
-
+        
     def finish(self, mode):
         self.result_mode = mode
         self.accept()
@@ -230,26 +179,27 @@ class SetupDialog(QDialog):
         self.config = config_manager
         self.resize(400, 200)
         layout = QFormLayout(self)
+        
         self.host_input = QLineEdit(self.config.get("host"))
         self.user_input = QLineEdit(self.config.get("username"))
-        self.pass_input = QLineEdit("") # Do not load from config
+        self.pass_input = QLineEdit("")
         self.pass_input.setEchoMode(QLineEdit.Password)
+        
         layout.addRow("RomM Host:", self.host_input)
         layout.addRow("Username:", self.user_input)
         layout.addRow("Password:", self.pass_input)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        buttons.accepted.connect(self.validate_and_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
-
+        
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        btns.accepted.connect(self.validate_and_accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+        
     def validate_and_accept(self):
-        host = self.host_input.text().strip()
-        url_pattern = re.compile(r'^https?://.+')
-        if not url_pattern.match(host):
-            QMessageBox.warning(self, "Invalid Host", "Please enter a valid URL (starting with http:// or https://)")
+        if not re.match(r'^https?://.+', self.host_input.text().strip()):
+            QMessageBox.warning(self, "Invalid Host", "Enter a valid URL.")
             return
         self.accept()
-
+        
     def get_data(self):
         return {
             "host": self.host_input.text().strip().rstrip('/'),
@@ -263,50 +213,33 @@ class ExePickerDialog(QDialog):
         self.setWindowTitle(f"Choose Executable — {game_name}")
         self.setMinimumSize(600, 450)
         self.selected_exe = None
-        
         self.setStyleSheet("QDialog { background-color: #1e1e1e; color: #ffffff; }")
         
         layout = QVBoxLayout(self)
-        title_label = QLabel("Multiple executables found. Please select the one to launch:")
-        title_label.setStyleSheet("font-size: 12pt; font-weight: bold; margin-bottom: 10px;")
-        layout.addWidget(title_label)
+        header = QLabel("Multiple executables found. Select one to launch:")
+        header.setStyleSheet("font-size: 12pt; font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(header)
         
         self.list_widget = QListWidget()
         self.list_widget.setStyleSheet("""
-            QListWidget {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 1px solid #555;
-                font-size: 10pt;
-            }
-            QListWidget::item {
-                padding: 12px;
-                border-bottom: 1px solid #3a3a3a;
-            }
-            QListWidget::item:selected {
-                background-color: #0d6efd;
-                color: #ffffff;
-            }
-            QListWidget::item:hover {
-                background-color: #3a3a3a;
-            }
+            QListWidget { background-color: #2b2b2b; color: #ffffff; border: 1px solid #555; font-size: 10pt; }
+            QListWidget::item { padding: 12px; border-bottom: 1px solid #3a3a3a; }
+            QListWidget::item:selected { background-color: #0d6efd; color: #ffffff; }
+            QListWidget::item:hover { background-color: #3a3a3a; }
         """)
         
-        for exe_path in exes:
+        for path in exes:
             try:
-                size = os.path.getsize(exe_path)
-                size_str = format_size(size)
-            except Exception:
+                size_str = format_size(os.path.getsize(path))
+            except:
                 size_str = "Unknown"
-                
-            item_text = f"{os.path.basename(exe_path)}\n({size_str}) — {exe_path}"
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.UserRole, exe_path)
+            item = QListWidgetItem(f"{os.path.basename(path)}\n({size_str}) — {path}")
+            item.setData(Qt.UserRole, path)
             self.list_widget.addItem(item)
             
         layout.addWidget(self.list_widget)
         
-        buttons = QHBoxLayout()
+        btns = QHBoxLayout()
         launch_btn = QPushButton("▶ Launch Selected")
         launch_btn.setStyleSheet("background: #2e7d32; color: white; font-weight: bold; padding: 10px; font-size: 11pt;")
         launch_btn.clicked.connect(self.accept_selection)
@@ -315,18 +248,17 @@ class ExePickerDialog(QDialog):
         cancel_btn.setStyleSheet("background: #444; color: #eee; padding: 10px;")
         cancel_btn.clicked.connect(self.reject)
         
-        buttons.addStretch()
-        buttons.addWidget(cancel_btn)
-        buttons.addWidget(launch_btn)
-        layout.addLayout(buttons)
-
+        btns.addStretch()
+        btns.addWidget(cancel_btn)
+        btns.addWidget(launch_btn)
+        layout.addLayout(btns)
+        
     def accept_selection(self):
-        selected_item = self.list_widget.currentItem()
-        if selected_item:
-            self.selected_exe = selected_item.data(Qt.UserRole)
+        if self.list_widget.currentItem():
+            self.selected_exe = self.list_widget.currentItem().data(Qt.UserRole)
             self.accept()
         else:
-            QMessageBox.warning(self, "No Selection", "Please select an executable from the list.")
+            QMessageBox.warning(self, "No Selection", "Please select an executable.")
 
 class WikiSuggestionsDialog(QDialog):
     def __init__(self, suggestions, game_name, parent=None):
@@ -338,9 +270,7 @@ class WikiSuggestionsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         
-        header = QLabel(f"Found {len(suggestions)} possible save locations from PCGamingWiki:")
-        header.setStyleSheet("font-weight: bold;")
-        layout.addWidget(header)
+        layout.addWidget(QLabel(f"<b>Found {len(suggestions)} possible save locations from PCGamingWiki:</b>"))
         
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -363,7 +293,6 @@ class WikiSuggestionsDialog(QDialog):
             rl.setContentsMargins(4, 0, 4, 0)
             rl.setSpacing(4)
             
-            # Badge (Fixed 130px)
             badge = QLabel(item["path_type"])
             color = "#2e7d32" if item["exists"] else "#555"
             badge.setFixedWidth(130)
@@ -371,20 +300,18 @@ class WikiSuggestionsDialog(QDialog):
             badge.setStyleSheet(f"background: {color}; color: white; border-radius: 2px; font-size: 10px; font-weight: bold; padding: 2px;")
             rl.addWidget(badge)
             
-            # Path text (Elided, 10px)
-            path_val = item['expanded_path']
-            elided = metrics.elidedText(path_val, Qt.ElideMiddle, 380)
-            path_label = QLabel(elided)
-            path_label.setToolTip(path_val)
-            path_label.setStyleSheet("font-size: 10px; color: #ddd;")
-            rl.addWidget(path_label, 1)
+            p_val = item['expanded_path']
+            elided = metrics.elidedText(p_val, Qt.ElideMiddle, 380)
+            lbl = QLabel(elided)
+            lbl.setToolTip(p_val)
+            lbl.setStyleSheet("font-size: 10px; color: #ddd;")
+            rl.addWidget(lbl, 1)
             
-            # Browse button (Fixed 100px)
-            browse_btn = QPushButton("📁 Browse Here")
-            browse_btn.setFixedWidth(100)
-            browse_btn.setStyleSheet("font-size: 10px; padding: 4px 8px; background: #444;")
-            browse_btn.clicked.connect(lambda checked, p=path_val: self.browse_and_confirm(p))
-            rl.addWidget(browse_btn)
+            btn = QPushButton("📁 Browse Here")
+            btn.setFixedWidth(100)
+            btn.setStyleSheet("font-size: 10px; padding: 4px 8px; background: #444;")
+            btn.clicked.connect(lambda checked, p=p_val: self.browse_and_confirm(p))
+            rl.addWidget(btn)
             
             list_layout.addWidget(row)
             
@@ -395,38 +322,30 @@ class WikiSuggestionsDialog(QDialog):
         cancel.setStyleSheet("padding: 6px;")
         cancel.clicked.connect(self.reject)
         layout.addWidget(cancel)
-
+        
     def browse_and_confirm(self, start_path):
-        # Find nearest existing parent
         p = Path(start_path)
         while not p.exists() and p.parent != p:
             p = p.parent
-            
         directory = QFileDialog.getExistingDirectory(self, "Select Save Folder", str(p))
         if directory:
-            res = QMessageBox.question(self, "Confirm Save Directory", 
-                f"You selected:\n{directory}\n\nIs this the correct save folder?")
-            if res == QMessageBox.Yes:
+            if QMessageBox.question(self, "Confirm", f"Use this folder?\n{directory}") == QMessageBox.Yes:
                 self.selected_path = directory
                 self.accept()
 
 class WikiFetchWorker(QThread):
     results_ready = Signal(list)
     failed = Signal()
-
+    
     def __init__(self, game_title, windows_games_dir):
         super().__init__()
         self.game_title = game_title
         self.windows_games_dir = windows_games_dir
-
+        
     def run(self):
         try:
             from src.pcgamingwiki import fetch_save_locations
-            results = fetch_save_locations(
-                self.game_title,
-                self.windows_games_dir
-            )
-            self.results_ready.emit(results)
+            self.results_ready.emit(fetch_save_locations(self.game_title, self.windows_games_dir))
         except Exception:
             self.failed.emit()
 
@@ -438,17 +357,13 @@ class SaveSyncSetupDialog(QDialog):
         self.config = config
         self.main_window = main_window
         self.selected_path = None
-        self.wiki_worker = None
-        self.wiki_timeout = None
-        
         self.setFixedSize(450, 250)
-        layout = QVBoxLayout(self)
         
+        layout = QVBoxLayout(self)
         msg = QLabel(f"Where does <b>{game_name}</b> save its files?<br><br>Setting this up enables automatic cloud backup.")
         msg.setWordWrap(True)
         msg.setAlignment(Qt.AlignCenter)
         layout.addWidget(msg)
-        
         layout.addStretch()
         
         self.btn_wiki = QPushButton("🌐 Get PCGamingWiki Suggestions")
@@ -457,26 +372,21 @@ class SaveSyncSetupDialog(QDialog):
         self.btn_wiki.clicked.connect(self.get_suggestions)
         layout.addWidget(self.btn_wiki)
         
-        btn_manual = QPushButton("📁 Browse Manually")
-        btn_manual.setStyleSheet("padding: 8px;")
-        btn_manual.clicked.connect(self.browse_manually)
-        layout.addWidget(btn_manual)
+        btn_man = QPushButton("📁 Browse Manually")
+        btn_man.clicked.connect(self.browse_manually)
+        layout.addWidget(btn_man)
         
         btn_skip = QPushButton("▶ Skip for Now")
         btn_skip.clicked.connect(self.reject)
         layout.addWidget(btn_skip)
-
+        
     def get_suggestions(self):
-        # Show loading
         self.loading_dlg = QMessageBox(self)
-        self.loading_dlg.setWindowTitle("Fetching Suggestions")
+        self.loading_dlg.setWindowTitle("Fetching")
         self.loading_dlg.setText("Querying PCGamingWiki...")
-        self.loading_dlg.setStandardButtons(QMessageBox.NoButton)
-        self.loading_dlg.setWindowModality(Qt.WindowModal)
         self.loading_dlg.show()
         
         self.btn_wiki.setEnabled(False)
-        
         self.wiki_worker = WikiFetchWorker(self.game_name, self.config.get("windows_games_dir", ""))
         self.wiki_worker.results_ready.connect(self.on_wiki_results)
         self.wiki_worker.failed.connect(self.on_wiki_failed)
@@ -485,41 +395,37 @@ class SaveSyncSetupDialog(QDialog):
         self.wiki_timeout.setSingleShot(True)
         self.wiki_timeout.timeout.connect(self.on_wiki_timeout)
         self.wiki_timeout.start(3000)
-        
         self.wiki_worker.start()
-
+        
     def on_wiki_timeout(self):
         if self.wiki_worker and self.wiki_worker.isRunning():
             self.wiki_worker.terminate()
             self.on_wiki_failed()
-
-    def on_wiki_results(self, results):
+            
+    def on_wiki_results(self, res):
         if self.wiki_timeout: self.wiki_timeout.stop()
-        self.loading_dlg.hide()
         self.loading_dlg.close()
         self.btn_wiki.setEnabled(True)
         
-        if not results:
-            QMessageBox.information(self, "No Suggestions", "No suggestions found for this game. Please browse manually.")
+        if not res:
+            QMessageBox.information(self, "No Suggestions", "None found. Browse manually.")
             self.browse_manually()
             return
             
-        # Small delay to ensure previous dialog is fully gone from screen
-        QTimer.singleShot(100, lambda: self._show_suggestions(results))
-
-    def _show_suggestions(self, results):
-        dialog = WikiSuggestionsDialog(results, self.game_name, self)
-        if dialog.exec() == QDialog.Accepted:
-            self.selected_path = dialog.selected_path
+        QTimer.singleShot(100, lambda: self._show_suggestions(res))
+        
+    def _show_suggestions(self, res):
+        d = WikiSuggestionsDialog(res, self.game_name, self)
+        if d.exec() == QDialog.Accepted:
+            self.selected_path = d.selected_path
             self.accept()
-
+            
     def on_wiki_failed(self):
         if self.wiki_timeout: self.wiki_timeout.stop()
-        self.loading_dlg.hide()
         self.loading_dlg.close()
         self.btn_wiki.setEnabled(True)
-        QMessageBox.warning(self, "Error", "Failed to reach PCGamingWiki. Please check your connection.")
-
+        QMessageBox.warning(self, "Error", "Failed to reach wiki.")
+        
     def browse_manually(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Save Folder")
         if directory:
@@ -529,173 +435,140 @@ class SaveSyncSetupDialog(QDialog):
 class WindowsGameSettingsDialog(QDialog):
     def __init__(self, game, config, main_window, parent=None):
         super().__init__(parent)
-        self.game, self.config, self.main_window = game, config, main_window
+        self.game = game
+        self.config = config
+        self.main_window = main_window
         self.setWindowTitle(f"Game Settings — {game.get('name')}")
         self.resize(550, 500)
-        self.wiki_worker = None
-        self.wiki_timeout = None
         
-        self.save_data = windows_saves.get_windows_save(game['id']) or {"name": game.get('name')}
-        self.default_exe = self.save_data.get("default_exe")
-        self.save_dir = self.save_data.get("save_dir")
+        saved = windows_saves.get_windows_save(game['id']) or {"name": game.get('name')}
+        self.default_exe = saved.get("default_exe")
+        self.save_dir = saved.get("save_dir")
         
         layout = QVBoxLayout(self)
-        
-        # Section 1: Default Executable
-        layout.addWidget(QLabel("<h3>Default Executable</h3>"))
-        layout.addWidget(QLabel("Choose which .exe to launch by default instead of being asked every time."))
+        layout.addWidget(QLabel("<h3>Default Executable</h3><p>Choose which .exe to launch by default.</p>"))
         
         self.exe_status = QLabel()
-        self.exe_status.setStyleSheet("color: #aaa; margin: 10px 0;")
+        self.exe_status.setStyleSheet("color: #aaa;")
         layout.addWidget(self.exe_status)
         
-        exe_btns = QHBoxLayout()
-        auto_btn = QPushButton("🔍 Auto-detect")
-        auto_btn.clicked.connect(self.auto_detect_exe)
-        exe_btns.addWidget(auto_btn)
-        
-        browse_btn = QPushButton("📁 Browse")
-        browse_btn.clicked.connect(self.browse_exe)
-        exe_btns.addWidget(browse_btn)
-        layout.addLayout(exe_btns)
-        
+        eb = QHBoxLayout()
+        ab = QPushButton("🔍 Auto-detect")
+        ab.clicked.connect(self.auto_detect_exe)
+        eb.addWidget(ab)
+        bb = QPushButton("📁 Browse")
+        bb.clicked.connect(self.browse_exe)
+        eb.addWidget(bb)
+        layout.addLayout(eb)
         layout.addSpacing(20)
         
-        # Section 2: Save Directory
-        layout.addWidget(QLabel("<h3>Save Directory</h3>"))
-        layout.addWidget(QLabel("Where does this game store its saves? Wingosy will sync this folder to the cloud."))
-        
+        layout.addWidget(QLabel("<h3>Save Directory</h3><p>Where does this game store its saves?</p>"))
         self.save_status = QLabel()
-        self.save_status.setStyleSheet("color: #aaa; margin: 10px 0;")
+        self.save_status.setStyleSheet("color: #aaa;")
         layout.addWidget(self.save_status)
         
-        save_btns = QHBoxLayout()
-        self.wiki_btn = QPushButton("🌐 PCGamingWiki Suggestions")
-        self.wiki_btn.setVisible(self.config.get("pcgamingwiki_enabled", True))
-        self.wiki_btn.clicked.connect(self.get_wiki_suggestions)
-        save_btns.addWidget(self.wiki_btn)
-        
-        manual_btn = QPushButton("📁 Browse Manually")
-        manual_btn.clicked.connect(self.browse_save_dir)
-        save_btns.addWidget(manual_btn)
-        layout.addLayout(save_btns)
+        sb = QHBoxLayout()
+        wb = QPushButton("🌐 PCGamingWiki Suggestions")
+        wb.setVisible(self.config.get("pcgamingwiki_enabled", True))
+        wb.clicked.connect(self.get_wiki_suggestions)
+        sb.addWidget(wb)
+        mb = QPushButton("📁 Browse Manually")
+        mb.clicked.connect(self.browse_save_dir)
+        sb.addWidget(mb)
+        layout.addLayout(sb)
         
         self.sync_status = QLabel()
-        self.sync_status.setStyleSheet("font-weight: bold; margin-top: 5px;")
+        self.sync_status.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.sync_status)
-        
         layout.addStretch()
         
-        # Dialog buttons
-        bottom_btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Close)
-        bottom_btns.accepted.connect(self.save_and_close)
-        bottom_btns.rejected.connect(self.reject)
-        layout.addWidget(bottom_btns)
+        btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Close)
+        btns.accepted.connect(self.save_and_close)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
         
         self.update_ui()
-
+        
     def update_ui(self):
         if self.default_exe:
-            filename = os.path.basename(self.default_exe)
-            self.exe_status.setText(f"<b>{filename}</b><br><small>{self.default_exe}</small>")
+            self.exe_status.setText(f"<b>{os.path.basename(self.default_exe)}</b><br><small>{self.default_exe}</small>")
         else:
-            self.exe_status.setText("No default set — will ask on each launch")
+            self.exe_status.setText("No default set")
             
-        if self.save_dir:
-            self.save_status.setText(self.save_dir)
-            if os.path.exists(self.save_dir):
-                self.sync_status.setText("<span style='color: #4caf50;'>✅ Cloud sync active</span>")
-            else:
-                self.sync_status.setText("<span style='color: #ff5252;'>⚠️ Folder does not exist</span>")
+        self.save_status.setText(self.save_dir or "Not configured")
+        
+        if self.save_dir and os.path.exists(self.save_dir):
+            self.sync_status.setText("<span style='color: #4caf50;'>✅ Cloud sync active</span>")
+        elif self.save_dir:
+            self.sync_status.setText("<span style='color: #ff5252;'>⚠️ Folder does not exist</span>")
         else:
-            self.save_status.setText("Not configured — no cloud sync active")
             self.sync_status.setText("")
-
+            
     def auto_detect_exe(self):
-        rom_name = self.game.get('fs_name')
-        if not rom_name: return
-        folder_name = Path(rom_name).stem
+        rom = self.game.get('fs_name')
         win_dir = self.config.get("windows_games_dir")
-        if not win_dir: return
-        
-        folder = Path(win_dir) / folder_name
-        if not folder.exists(): return
-        
-        exes = []
-        for p in folder.rglob("*.exe"):
-            name = p.name.lower()
-            if not any(ex in name for ex in EXCLUDED_EXES):
-                exes.append(str(p))
-        
-        if not exes:
-            QMessageBox.information(self, "No EXEs", "No executables found in the game folder.")
+        if not rom or not win_dir:
             return
             
-        picker = ExePickerDialog(exes, self.game.get("name"), self)
-        if picker.exec() == QDialog.Accepted:
-            self.default_exe = picker.selected_exe
+        folder = Path(win_dir) / Path(rom).stem
+        if not folder.exists():
+            return
+            
+        exes = [str(p) for p in folder.rglob("*.exe") if not any(ex.lower() in str(p).lower() for ex in EXCLUDED_EXES)]
+        if not exes:
+            QMessageBox.information(self, "No EXEs", "None found.")
+            return
+            
+        if len(exes) == 1:
+            self.default_exe = exes[0]
             self.update_ui()
-
+        else:
+            p = ExePickerDialog(exes, self.game.get("name"), self)
+            if p.exec() == QDialog.Accepted:
+                self.default_exe = p.selected_exe
+                self.update_ui()
+                
     def browse_exe(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Game Executable", "", "Executables (*.exe)")
-        if path:
-            self.default_exe = path
+        p, _ = QFileDialog.getOpenFileName(self, "Select Executable", "", "Executables (*.exe)")
+        if p:
+            self.default_exe = p
             self.update_ui()
-
+            
     def get_wiki_suggestions(self):
         self.loading_dlg = QMessageBox(self)
-        self.loading_dlg.setWindowTitle("Fetching Suggestions")
+        self.loading_dlg.setWindowTitle("Fetching")
         self.loading_dlg.setText("Querying PCGamingWiki...")
-        self.loading_dlg.setStandardButtons(QMessageBox.NoButton)
-        self.loading_dlg.setWindowModality(Qt.WindowModal)
         self.loading_dlg.show()
-        
-        self.wiki_btn.setEnabled(False)
         
         self.wiki_worker = WikiFetchWorker(self.game.get("name"), self.config.get("windows_games_dir", ""))
         self.wiki_worker.results_ready.connect(self.on_wiki_results)
-        self.wiki_worker.failed.connect(self.on_wiki_failed)
+        self.wiki_worker.failed.connect(lambda: (self.loading_dlg.close(), QMessageBox.warning(self, "Error", "Failed.")))
         
         self.wiki_timeout = QTimer()
         self.wiki_timeout.setSingleShot(True)
-        self.wiki_timeout.timeout.connect(self.on_wiki_timeout)
+        self.wiki_timeout.timeout.connect(lambda: (self.wiki_worker.terminate(), self.loading_dlg.close()))
         self.wiki_timeout.start(3000)
-        
         self.wiki_worker.start()
-
-    def on_wiki_timeout(self):
-        if self.wiki_worker and self.wiki_worker.isRunning():
-            self.wiki_worker.terminate()
-            self.on_wiki_failed()
-
-    def on_wiki_results(self, results):
-        if self.wiki_timeout: self.wiki_timeout.stop()
-        self.loading_dlg.hide()
-        self.loading_dlg.close()
-        self.wiki_btn.setEnabled(True)
         
-        if not results:
-            QMessageBox.information(self, "No Suggestions", "No suggestions found for this game.")
+    def on_wiki_results(self, res):
+        if self.wiki_timeout: self.wiki_timeout.stop()
+        self.loading_dlg.close()
+        
+        if not res:
+            QMessageBox.information(self, "No Suggestions", "None found.")
             return
             
-        dialog = WikiSuggestionsDialog(results, self.game.get("name"), self)
-        if dialog.exec() == QDialog.Accepted:
-            self.save_dir = dialog.selected_path
+        d = WikiSuggestionsDialog(res, self.game.get("name"), self)
+        if d.exec() == QDialog.Accepted:
+            self.save_dir = d.selected_path
             self.update_ui()
-
-    def on_wiki_failed(self):
-        if self.wiki_timeout: self.wiki_timeout.stop()
-        self.loading_dlg.hide()
-        self.loading_dlg.close()
-        self.wiki_btn.setEnabled(True)
-        QMessageBox.warning(self, "Error", "Failed to reach PCGamingWiki. Please check your connection.")
-
+            
     def browse_save_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Save Folder")
         if directory:
             self.save_dir = directory
             self.update_ui()
-
+            
     def save_and_close(self):
         windows_saves.set_windows_save(self.game['id'], self.game['name'], self.save_dir, self.default_exe)
         self.accept()
@@ -707,321 +580,197 @@ class SettingsDialog(QDialog):
         self.config = config_manager
         self.main_window = main_window
         self.resize(400, 600)
-        self.settings_layout = QVBoxLayout(self)
-
-        host_layout = QHBoxLayout()
-        host_layout.addWidget(QLabel("Server Host:"))
+        layout = QVBoxLayout(self)
+        
+        hl = QHBoxLayout()
+        hl.addWidget(QLabel("Server Host:"))
         self.host_input = QLineEdit()
         self.host_input.setText(self.config.get("host", ""))
-        self.host_input.setPlaceholderText("http://192.168.x.x:8285")
-        host_layout.addWidget(self.host_input)
-
-        self.test_conn_btn = QPushButton("Test Connection")
-        self.test_conn_btn.clicked.connect(self._test_host_connection)
-        host_layout.addWidget(self.test_conn_btn)
-
-        self.reconnect_btn = QPushButton("✅ Apply & Re-connect")
-        self.reconnect_btn.setVisible(False)
-        self.reconnect_btn.setStyleSheet(
-            "background: #2e7d32; color: white; padding: 4px 10px;")
-        self.reconnect_btn.clicked.connect(self._apply_and_restart)
-        host_layout.addWidget(self.reconnect_btn)
-
-        self.settings_layout.addLayout(host_layout)
+        hl.addWidget(self.host_input)
         
-        self.settings_layout.addWidget(QLabel(f"<b>User:</b> {self.config.get('username')}"))
-        self.settings_layout.addWidget(QLabel(f"<b>Version:</b> {self.main_window.version}"))
+        self.test_btn = QPushButton("Test Connection")
+        self.test_btn.clicked.connect(self._test_host_connection)
+        hl.addWidget(self.test_btn)
         
-        self.auto_pull_btn = QPushButton("Auto Pull Saves: ON" if self.config.get("auto_pull_saves", True) else "Auto Pull Saves: OFF")
-        self.auto_pull_btn.setCheckable(True)
-        self.auto_pull_btn.setChecked(self.config.get("auto_pull_saves", True))
-        self.auto_pull_btn.toggled.connect(self.toggle_auto_pull)
-        self.settings_layout.addWidget(self.auto_pull_btn)
+        self.re_btn = QPushButton("✅ Apply & Re-connect")
+        self.re_btn.setVisible(False)
+        self.re_btn.setStyleSheet("background: #2e7d32; color: white;")
+        self.re_btn.clicked.connect(self._apply_and_restart)
+        hl.addWidget(self.re_btn)
+        layout.addLayout(hl)
         
-        # Cards per row setting
-        cards_row_layout = QHBoxLayout()
-        cards_row_layout.addWidget(QLabel("Cards per row:"))
-        self.cards_per_row_spin = QSpinBox()
-        self.cards_per_row_spin.setMinimum(1)
-        self.cards_per_row_spin.setMaximum(12)
-        self.cards_per_row_spin.setValue(self.config.get("cards_per_row", 6))
-        self.cards_per_row_spin.valueChanged.connect(self.set_cards_per_row)
-        cards_row_layout.addWidget(self.cards_per_row_spin)
-        cards_row_layout.addStretch()
-        self.settings_layout.addLayout(cards_row_layout)
+        layout.addWidget(QLabel(f"<b>User:</b> {self.config.get('username')}  |  <b>Version:</b> {self.main_window.version}"))
         
-        # RetroArch save mode
-        self.settings_layout.addWidget(QLabel("<b>RetroArch Save Mode:</b>"))
-        self.ra_save_mode_combo = QComboBox()
-        self.ra_save_mode_combo.addItems(["SRM only", "States only", "Both"])
-        mode_map = {"srm": "SRM only", "state": "States only", "both": "Both"}
-        current_mode = self.config.get("retroarch_save_mode", "srm")
-        self.ra_save_mode_combo.setCurrentText(mode_map.get(current_mode, "SRM only"))
-        self.ra_save_mode_combo.currentTextChanged.connect(self.set_ra_save_mode)
-        self.settings_layout.addWidget(self.ra_save_mode_combo)
-
-        # Windows Games Folder
-        self.settings_layout.addWidget(QLabel("<b>Windows Games Folder:</b>"))
-        win_folder_layout = QHBoxLayout()
-        self.win_folder_input = QLineEdit(self.config.get("windows_games_dir", ""))
-        win_folder_layout.addWidget(self.win_folder_input)
-        browse_win_btn = QPushButton("Browse")
-        browse_win_btn.clicked.connect(self.browse_windows_folder)
-        win_folder_layout.addWidget(browse_win_btn)
-        self.settings_layout.addLayout(win_folder_layout)
+        self.ap_btn = QPushButton("Auto Pull Saves: ON" if self.config.get("auto_pull_saves", True) else "Auto Pull Saves: OFF")
+        self.ap_btn.setCheckable(True)
+        self.ap_btn.setChecked(self.config.get("auto_pull_saves", True))
+        self.ap_btn.toggled.connect(self.toggle_auto_pull)
+        layout.addWidget(self.ap_btn)
         
-        # Wiki Toggle
+        cl = QHBoxLayout()
+        cl.addWidget(QLabel("Cards per row:"))
+        self.row_spin = QSpinBox()
+        self.row_spin.setRange(1, 12)
+        self.row_spin.setValue(self.config.get("cards_per_row", 6))
+        self.row_spin.valueChanged.connect(self.set_cards_per_row)
+        cl.addWidget(self.row_spin)
+        cl.addStretch()
+        layout.addLayout(cl)
+        
+        layout.addWidget(QLabel("<b>RetroArch Save Mode:</b>"))
+        self.ra_combo = QComboBox()
+        self.ra_combo.addItems(["SRM only", "States only", "Both"])
+        ra_mode = self.config.get("retroarch_save_mode", "srm")
+        self.ra_combo.setCurrentText({"srm": "SRM only", "state": "States only", "both": "Both"}.get(ra_mode))
+        self.ra_combo.currentTextChanged.connect(self.set_ra_save_mode)
+        layout.addWidget(self.ra_combo)
+        
+        layout.addWidget(QLabel("<b>Windows Games Folder:</b>"))
+        wl = QHBoxLayout()
+        self.win_input = QLineEdit(self.config.get("windows_games_dir", ""))
+        wl.addWidget(self.win_input)
+        wb = QPushButton("Browse")
+        wb.clicked.connect(self.browse_win)
+        wl.addWidget(wb)
+        layout.addLayout(wl)
+        
         self.wiki_check = QCheckBox("PCGamingWiki Save Suggestions")
         self.wiki_check.setChecked(self.config.get("pcgamingwiki_enabled", True))
         self.wiki_check.stateChanged.connect(lambda s: self.config.set("pcgamingwiki_enabled", s == Qt.Checked.value))
-        self.settings_layout.addWidget(self.wiki_check)
-
-        # Log level setting
-        log_level_layout = QHBoxLayout()
-        log_level_layout.addWidget(QLabel("<b>Log Level:</b>"))
-        self.log_level_combo = QComboBox()
-        self.log_level_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
-        current_level = self.config.get("log_level", "INFO").upper()
-        self.log_level_combo.setCurrentText(current_level)
-        self.log_level_combo.currentTextChanged.connect(self.set_log_level)
-        log_level_layout.addWidget(self.log_level_combo)
-        log_level_layout.addStretch()
-        self.settings_layout.addLayout(log_level_layout)
+        layout.addWidget(self.wiki_check)
         
-        self.settings_layout.addSpacing(10)
-        self.update_btn = QPushButton("Check for Updates")
-        self.update_btn.clicked.connect(self.check_updates)
-        self.settings_layout.addWidget(self.update_btn)
+        ll = QHBoxLayout()
+        ll.addWidget(QLabel("<b>Log Level:</b>"))
+        self.log_combo = QComboBox()
+        self.log_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
+        self.log_combo.setCurrentText(self.config.get("log_level", "INFO").upper())
+        self.log_combo.currentTextChanged.connect(self.set_log_level)
+        ll.addWidget(self.log_combo)
+        ll.addStretch()
+        layout.addLayout(ll)
         
-        self.upgrade_btn = QPushButton("Upgrade Available!")
-        self.upgrade_btn.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
-        self.upgrade_btn.setVisible(False)
-        self.settings_layout.addWidget(self.upgrade_btn)
-
-        self.update_pbar = QProgressBar()
-        self.update_pbar.setVisible(False)
-        self.settings_layout.addWidget(self.update_pbar)
+        layout.addSpacing(10)
+        ub = QPushButton("Check for Updates")
+        ub.clicked.connect(self.check_updates)
+        layout.addWidget(ub)
         
-        self.settings_layout.addStretch()
+        self.up_btn = QPushButton("Upgrade Available!")
+        self.up_btn.setStyleSheet("background: #2e7d32; color: white;")
+        self.up_btn.setVisible(False)
+        layout.addWidget(self.up_btn)
         
-        self.about_btn = QPushButton("ℹ️ About Wingosy")
-        self.about_btn.clicked.connect(self.show_about)
-        self.settings_layout.addWidget(self.about_btn)
+        self.pbar = QProgressBar()
+        self.pbar.setVisible(False)
+        layout.addWidget(self.pbar)
+        layout.addStretch()
         
-        self.logout_btn = QPushButton("Log Out")
-        self.logout_btn.setStyleSheet("background-color: #c62828; color: white; padding: 8px;")
-        self.logout_btn.clicked.connect(self.do_logout)
-        self.settings_layout.addWidget(self.logout_btn)
+        lb = QPushButton("Log Out")
+        lb.setStyleSheet("background: #c62828; color: white;")
+        lb.clicked.connect(self.do_logout)
+        layout.addWidget(lb)
         
-        buttons = QDialogButtonBox(QDialogButtonBox.Close, self)
-        buttons.rejected.connect(self.reject)
-        self.settings_layout.addWidget(buttons)
-
-        self.latest_version_url = ""
-
-    def browse_windows_folder(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Windows Games Folder")
+        bb = QDialogButtonBox(QDialogButtonBox.Close, self)
+        bb.rejected.connect(self.reject)
+        layout.addWidget(bb)
+        
+    def browse_win(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Folder")
         if directory:
-            self.win_folder_input.setText(directory)
+            self.win_input.setText(directory)
             self.config.set("windows_games_dir", directory)
-
+            
     def _test_host_connection(self):
         host = self.host_input.text().strip()
-        if not host:
-            QMessageBox.warning(self, "No Host", "Please enter a host URL.")
-            return
-        self.test_conn_btn.setText("Testing...")
-        self.test_conn_btn.setEnabled(False)
-        
-        # Use the unified test_connection method from the client with retry feedback
-        success, message = self.main_window.client.test_connection(
-            host_override=host,
-            retry_callback=lambda: self.test_conn_btn.setText("Retrying (slow server)...")
+        if not host: return
+        self.test_btn.setText("Testing...")
+        self.test_btn.setEnabled(False)
+        ok, msg = self.main_window.client.test_connection(
+            host_override=host, 
+            retry_callback=lambda: self.test_btn.setText("Retrying...")
         )
-        
-        self.test_conn_btn.setText("Test Connection")
-        self.test_conn_btn.setEnabled(True)
-        if success:
-            QMessageBox.information(self, "Success",
-                f"{message} Click 'Apply & Reconnect' to use this host.")
-            self.reconnect_btn.setVisible(True)
+        self.test_btn.setText("Test Connection")
+        self.test_btn.setEnabled(True)
+        if ok:
+            QMessageBox.information(self, "Success", f"{msg} Click Apply.")
+            self.re_btn.setVisible(True)
         else:
-            QMessageBox.warning(self, "Failed", message)
-            self.reconnect_btn.setVisible(False)
-
+            QMessageBox.warning(self, "Failed", msg)
+            self.re_btn.setVisible(False)
+            
     def _apply_and_restart(self):
-        import logging
-        import time
-        new_host = self.host_input.text().strip()
-        logging.info("[Restart] _apply_and_restart called")
-        logging.info(f"[Restart] new host={new_host}")
-        
-        # Save config first
-        self.config.set("host", new_host)
-        
-        # Small delay to ensure config is flushed to disk
-        time.sleep(0.3)
-        
-        QMessageBox.information(self, "Restarting",
-            "Host saved. The app will now restart.")
-        
-        logging.info("[Restart] config saved, calling _do_restart")
+        self.config.set("host", self.host_input.text().strip())
+        QMessageBox.information(self, "Restarting", "App will restart.")
         self._do_restart()
-
+        
     def _do_restart(self):
-        import logging
-        import subprocess
-        import sys
-        import os
-        
-        logging.info("[Restart] _do_restart called")
-        logging.info(f"[Restart] frozen="
-                     f"{getattr(sys, 'frozen', False)}")
-        logging.info(f"[Restart] sys.executable={sys.executable}")
-        logging.info(f"[Restart] sys.argv={sys.argv}")
-        
-        exe = sys.executable  # Always the correct exe, 
-                               # frozen or not
-        
-        try:
-            logging.info(f"[Restart] about to Popen: {exe}")
-            
-            if sys.platform == "win32":
-                # Windows: detached process so it survives
-                # parent exit
-                DETACHED_PROCESS = 0x00000008
-                CREATE_NEW_PROCESS_GROUP = 0x00000200
-                subprocess.Popen(
-                    [exe],
-                    close_fds=True,
-                    creationflags=(
-                        DETACHED_PROCESS | 
-                        CREATE_NEW_PROCESS_GROUP),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            else:
-                subprocess.Popen(
-                    [exe],
-                    close_fds=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            
-            logging.info("[Restart] Popen complete")
-        except Exception as e:
-            logging.exception(f"[Restart] Popen failed: {e}")
-            return
-        
-        logging.info("[Restart] calling sys.exit(0)")
+        if sys.platform == "win32":
+            subprocess.Popen([sys.executable], close_fds=True, creationflags=(0x00000008 | 0x00000200), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen([sys.executable], close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         sys.exit(0)
-
-    def show_about(self):
-        QMessageBox.about(self, "About Wingosy",
-            f"<b>Wingosy Launcher</b> v{self.main_window.version}<br><br>"
-            "A lightweight Windows game launcher for RomM.<br>"
-            "Licensed under GNU GPL v3.0.<br><br>"
-            "<a href='https://github.com/abduznik/Wingosy-Launcher'>GitHub Repository</a>"
-        )
-
+        
     def toggle_auto_pull(self, checked):
         self.config.set("auto_pull_saves", checked)
-        self.auto_pull_btn.setText("Auto Pull Saves: ON" if checked else "Auto Pull Saves: OFF")
-
-    def set_cards_per_row(self, value):
-        self.config.set("cards_per_row", value)
-        lib = self.main_window.library_tab
-        lib._resize_all_cards()
-
+        self.ap_btn.setText("Auto Pull Saves: ON" if checked else "Auto Pull Saves: OFF")
+        
+    def set_cards_per_row(self, val):
+        self.config.set("cards_per_row", val)
+        self.main_window.library_tab._resize_all_cards()
+        
     def set_log_level(self, text):
         self.config.set("log_level", text)
-        level = getattr(logging, text.upper(), logging.INFO)
-        logging.getLogger().setLevel(level)
-        logging.info(f"Log level changed to {text}")
-
+        logging.getLogger().setLevel(getattr(logging, text.upper(), logging.INFO))
+        
     def set_ra_save_mode(self, text):
-        mode_map = {"SRM only": "srm", "States only": "state", "Both": "both"}
-        self.config.set("retroarch_save_mode", mode_map.get(text, "srm"))
-
+        mode = {"SRM only": "srm", "States only": "state", "Both": "both"}.get(text, "srm")
+        self.config.set("retroarch_save_mode", mode)
+        
     def check_updates(self):
-        self.update_btn.setEnabled(False)
-        self.update_btn.setText("Checking...")
         self.updater = UpdaterThread(self.main_window.version)
         self.updater.finished.connect(self.on_update_result)
         self.updater.start()
-
-    def on_update_result(self, available, version, url):
-        self.update_btn.setEnabled(True)
-        self.update_btn.setText("Check for Updates")
-        if available:
-            self.latest_version_url = url
-            self.upgrade_btn.setText(f"Upgrade to v{version}")
-            self.upgrade_btn.setVisible(True)
-            try: self.upgrade_btn.clicked.disconnect()
-            except Exception: pass
-            
-            if getattr(sys, 'frozen', False):
-                self.upgrade_btn.clicked.connect(self.start_self_update)
-            else:
-                self.upgrade_btn.clicked.connect(lambda: webbrowser.open(url))
-        else:
-            QMessageBox.information(self, "No Updates", "You are running the latest version.")
-
-    def start_self_update(self):
-        self.upgrade_btn.setEnabled(False)
-        self.upgrade_btn.setText("Downloading update...")
-        self.update_pbar.setVisible(True)
-        self.update_pbar.setValue(0)
         
-        current_exe = Path(sys.executable).resolve()
-        self.updater_thread = SelfUpdateThread(self.latest_version_url, current_exe)
-        self.updater_thread.progress.connect(self.update_pbar.setValue)
-        self.updater_thread.finished.connect(self.on_self_update_finished)
-        self.updater_thread.start()
-
-    def on_self_update_finished(self, success, message):
-        if success:
-            QMessageBox.information(self, "Update Complete", "Update downloaded! Click OK to restart Wingosy.")
-            current_exe = Path(sys.executable).resolve()
-            pid = os.getpid()
-            bat_path = current_exe.parent / "_wingosy_restart.bat"
-            bat_content = (
-                f'@echo off\n'
-                f':wait\n'
-                f'tasklist /FI "PID eq {pid}" 2>NUL | find /I "{pid}" >NUL\n'
-                f'if not errorlevel 1 (\n'
-                f'    timeout /t 1 /nobreak >NUL\n'
-                f'    goto wait\n'
-                f')\n'
-                f'start "" "{current_exe}"\n'
-                f'del "%~f0"\n'
-            )
-            bat_path.write_text(bat_content)
-            subprocess.Popen(
-                ['cmd.exe', '/c', str(bat_path)],
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            QApplication.instance().quit()
+    def on_update_result(self, available, version, url):
+        if available:
+            self.latest_url = url
+            self.up_btn.setText(f"Upgrade to v{version}")
+            self.up_btn.setVisible(True)
+            if getattr(sys, 'frozen', False):
+                self.up_btn.clicked.connect(self.start_self_update)
+            else:
+                self.up_btn.clicked.connect(lambda: webbrowser.open(url))
         else:
-            QMessageBox.critical(self, "Update Failed", f"Could not replace the current file. Please download manually.\nError: {message}")
-            self.upgrade_btn.setEnabled(True)
-            self.upgrade_btn.setText("Retry Update")
-            webbrowser.open(self.latest_version_url)
-
-    def do_logout(self):
-        reply = QMessageBox.question(self, "Log Out", "Are you sure you want to log out? You will need to enter your credentials again.", QMessageBox.Yes | QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            return
+            QMessageBox.information(self, "No Updates", "You are on the latest version.")
             
-        self.main_window.client.logout()
-        self.config.set("password", None)
-        QMessageBox.information(self, "Logged Out", "You have been logged out. Restart to log in.")
-        QApplication.instance().quit()
+    def start_self_update(self):
+        self.up_btn.setEnabled(False)
+        self.pbar.setVisible(True)
+        self.t = SelfUpdateThread(self.latest_url, Path(sys.executable).resolve())
+        self.t.progress.connect(self.pbar.setValue)
+        self.t.finished.connect(self.on_self_update_finished)
+        self.t.start()
+        
+    def on_self_update_finished(self, success, msg):
+        if success:
+            QMessageBox.information(self, "Done", "Update installed. Restarting...")
+            subprocess.Popen(['cmd.exe', '/c', f'timeout /t 2 >NUL & start "" "{sys.executable}"'], creationflags=subprocess.CREATE_NO_WINDOW)
+            sys.exit(0)
+        else:
+            QMessageBox.critical(self, "Failed", msg)
+            
+    def do_logout(self):
+        if QMessageBox.question(self, "Log Out", "Are you sure you want to log out?") == QMessageBox.Yes:
+            self.main_window.client.logout()
+            self.config.set("password", None)
+            sys.exit(0)
 
 class GameDetailDialog(QDialog):
     def __init__(self, game, client, config, main_window, parent=None):
         super().__init__(parent)
-        self.game, self.client, self.config, self.main_window = game, client, config, main_window
+        self.game = game
+        self.client = client
+        self.config = config
+        self.main_window = main_window
         self.setWindowTitle(game.get("name"))
         self.setFixedSize(800, 550)
         self.dl_thread = None
@@ -1030,378 +779,298 @@ class GameDetailDialog(QDialog):
         self._is_windows = game.get("platform_slug") in WINDOWS_PLATFORM_SLUGS
         self._local_rom_path = self._get_local_rom_path()
         
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
         
-        # Title (Top)
         title_label = QLabel(game.get('name'))
         title_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #1e88e5;")
         title_label.setWordWrap(True)
-        main_layout.addWidget(title_label)
+        layout.addWidget(title_label)
         
-        # Content layout (Cover | Metadata)
         content_layout = QHBoxLayout()
         content_layout.setSpacing(25)
         
-        # Left: Cover Image (300px wide)
         self.img_label = QLabel()
         self.img_label.setFixedWidth(300)
-        self.img_label.setAlignment(Qt.AlignCenter)
         self.img_label.setStyleSheet("background: #1a1a1a; border-radius: 6px;")
         content_layout.addWidget(self.img_label)
         
-        # Right Column: Metadata + Description + Action Buttons
         right_column = QVBoxLayout()
-        right_column.setSpacing(0) # Remove default spacing
+        right_column.setSpacing(0)
         
-        platform_label = QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}")
-        platform_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px;")
-        right_column.addWidget(platform_label)
+        right_column.addWidget(QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}", styleSheet="font-size: 12pt; margin-bottom: 2px;"))
         
-        # Size
-        total_bytes = 0
-        for f in game.get('files', []):
-            total_bytes += f.get('file_size_bytes', 0)
-        size_str = format_size(total_bytes)
-        size_label = QLabel(f"<b>Size:</b> {size_str}")
-        size_label.setStyleSheet("font-size: 12pt; margin-bottom: 8px;")
-        right_column.addWidget(size_label)
+        total_bytes = sum(f.get('file_size_bytes', 0) for f in game.get('files', []))
+        right_column.addWidget(QLabel(f"<b>Size:</b> {format_size(total_bytes)}", styleSheet="font-size: 12pt; margin-bottom: 8px;"))
         
-        # Description scroll area
         self.desc_scroll = QScrollArea()
         self.desc_scroll.setWidgetResizable(True)
         self.desc_scroll.setStyleSheet("background: transparent; border: none;")
+        
         self.desc_label = QLabel("Loading description...")
         self.desc_label.setWordWrap(True)
         self.desc_label.setAlignment(Qt.AlignTop)
         self.desc_label.setStyleSheet("color: #ccc; font-size: 11pt; line-height: 1.4;")
         self.desc_scroll.setWidget(self.desc_label)
-        right_column.addWidget(self.desc_scroll, 1) # Give it stretch factor 1
+        right_column.addWidget(self.desc_scroll, 1)
         
-        # Progress area (for downloads)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        right_column.addWidget(self.progress_bar)
+        self.pbar = QProgressBar()
+        self.pbar.setVisible(False)
+        right_column.addWidget(self.pbar)
+        
         self.speed_label = QLabel()
         self.speed_label.setAlignment(Qt.AlignCenter)
         right_column.addWidget(self.speed_label)
         
-        # Action Buttons Container (Minimized spacing)
-        self.actions_layout = QVBoxLayout()
-        self.actions_layout.setContentsMargins(0, 0, 0, 0) # Perfectly tight to description
-        self.actions_layout.setSpacing(4) # Very small margin between buttons
+        actions_layout = QVBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(4)
         
         self.play_btn = QPushButton("▶ PLAY")
         self.play_btn.setStyleSheet("background: #2e7d32; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         self.play_btn.clicked.connect(self.play_game)
         
-        self.game_settings_btn = QPushButton("⚙ Game Settings")
-        self.game_settings_btn.setStyleSheet("background: #455a64; color: white; padding: 8px; font-size: 11pt;")
-        self.game_settings_btn.clicked.connect(self.open_game_settings)
+        self.gs_btn = QPushButton("⚙ Game Settings")
+        self.gs_btn.setStyleSheet("background: #455a64; color: white; padding: 8px; font-size: 11pt;")
+        self.gs_btn.clicked.connect(self.open_game_settings)
         
-        self.uninstall_btn = QPushButton("🗑 Uninstall")
-        self.uninstall_btn.setStyleSheet("background: #8e0000; color: white; padding: 6px; font-size: 11pt;")
-        self.uninstall_btn.clicked.connect(self.uninstall_game)
+        self.un_btn = QPushButton("🗑 Uninstall")
+        self.un_btn.setStyleSheet("background: #8e0000; color: white; padding: 6px; font-size: 11pt;")
+        self.un_btn.clicked.connect(self.uninstall_game)
         
         self.dl_btn = QPushButton("⬇ DOWNLOAD")
         self.dl_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         self.dl_btn.clicked.connect(self._on_download_clicked)
         
-        self.cancel_btn = QPushButton("Cancel Download")
-        self.cancel_btn.setStyleSheet("background: #c62828; color: white;")
-        self.cancel_btn.setVisible(False)
-        self.cancel_btn.clicked.connect(self.cancel_dl)
+        self.can_btn = QPushButton("Cancel Download")
+        self.can_btn.setStyleSheet("background: #c62828; color: white;")
+        self.can_btn.setVisible(False)
+        self.can_btn.clicked.connect(self.cancel_dl)
         
-        self.actions_layout.addWidget(self.play_btn)
-        self.actions_layout.addWidget(self.game_settings_btn)
-        self.actions_layout.addWidget(self.uninstall_btn)
-        self.actions_layout.addWidget(self.dl_btn)
-        self.actions_layout.addWidget(self.cancel_btn)
+        actions_layout.addWidget(self.play_btn)
+        actions_layout.addWidget(self.gs_btn)
+        actions_layout.addWidget(self.un_btn)
+        actions_layout.addWidget(self.dl_btn)
+        actions_layout.addWidget(self.can_btn)
         
-        right_column.addLayout(self.actions_layout)
-        
+        right_column.addLayout(actions_layout)
         content_layout.addLayout(right_column, 1)
-        main_layout.addLayout(content_layout)
+        layout.addLayout(content_layout)
         
-        # Close button (Bottom, spans full width)
         close_btn = QPushButton("Close")
         close_btn.setStyleSheet("background: #333; color: #ccc; padding: 8px; font-size: 14pt;")
         close_btn.clicked.connect(self.reject)
-        main_layout.addWidget(close_btn)
+        layout.addWidget(close_btn)
         
-        # Fetch data
         self._update_button_states()
         self._start_image_fetch()
         self._start_desc_fetch()
-
-    def _get_local_rom_path(self):
-        platform = self.game.get('platform_slug')
         
+    def _get_local_rom_path(self):
         if self._is_windows:
-            win_dir = self.config.get("windows_games_dir")
-            if not win_dir: return None
-            rom_name = self.game.get('fs_name')
-            if not rom_name: return None
-            folder_name = Path(rom_name).stem
-            return Path(win_dir) / folder_name
-
-        base_rom = self.config.get("base_rom_path")
-        rom_name = self.game.get('fs_name')
-        if not rom_name: return None
-        return Path(base_rom) / platform / rom_name
-
+            wd = self.config.get("windows_games_dir")
+            fn = self.game.get('fs_name')
+            return Path(wd) / Path(fn).stem if wd and fn else None
+        
+        br = self.config.get("base_rom_path")
+        fn = self.game.get('fs_name')
+        return Path(br) / self.game.get('platform_slug') / fn if br and fn else None
+        
     def _update_button_states(self):
-        exists = False
-        if self._is_windows:
-            folder = self._local_rom_path
-            if folder and folder.exists() and folder.is_dir():
-                exists = any(folder.rglob("*.exe"))
+        if self._is_windows and self._local_rom_path and self._local_rom_path.is_dir():
+            exists = any(self._local_rom_path.rglob("*.exe"))
         else:
             exists = self._local_rom_path and self._local_rom_path.exists()
-            if not exists:
-                base_rom = self.config.get("base_rom_path")
-                rom_name = self.game.get('fs_name')
-                if rom_name:
-                    root_path = Path(base_rom) / rom_name
-                    if root_path.exists():
-                        self._local_rom_path = root_path
-                        exists = True
-        
+            
+        if not exists and not self._is_windows:
+            br = self.config.get("base_rom_path")
+            fn = self.game.get('fs_name')
+            rp = Path(br) / fn if br and fn else None
+            if rp and rp.exists():
+                self._local_rom_path = rp
+                exists = True
+                
         self.play_btn.setVisible(exists)
-        self.game_settings_btn.setVisible(exists and self._is_windows)
-        self.uninstall_btn.setVisible(exists)
+        self.gs_btn.setVisible(exists and self._is_windows)
+        self.un_btn.setVisible(exists)
         self.dl_btn.setVisible(not exists)
-
+        
     def open_game_settings(self):
-        dialog = WindowsGameSettingsDialog(self.game, self.config, self.main_window, self)
-        if dialog.exec() == QDialog.Accepted:
-            self.main_window.log(f"✅ Settings updated for {self.game.get('name')}")
+        if WindowsGameSettingsDialog(self.game, self.config, self.main_window, self).exec() == QDialog.Accepted:
             self._update_button_states()
-
+            
     def _start_image_fetch(self):
         url = self.client.get_cover_url(self.game)
         if url:
-            self.img_fetch_thread = ImageFetcher(self.game['id'], url)
-            self.img_fetch_thread.finished.connect(self._on_image_loaded)
-            self.img_fetch_thread.finished.connect(lambda t=self.img_fetch_thread: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
-            self.main_window.active_threads.append(self.img_fetch_thread)
-            self.img_fetch_thread.start()
-
-    def _on_image_loaded(self, gid, pixmap):
-        self.img_label.setPixmap(pixmap.scaled(300, 420, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-    def _start_desc_fetch(self):
-        self.desc_thread = GameDescriptionFetcher(self.client, self.game['id'])
-        self.desc_thread.finished.connect(self.desc_label.setText)
-        self.desc_thread.finished.connect(lambda t=self.desc_thread: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
-        self.main_window.active_threads.append(self.desc_thread)
-        self.desc_thread.start()
-
-    def uninstall_game(self):
-        confirm_msg = f"Are you sure you want to delete {self.game.get('name')} from your device?\n\nCloud saves are not affected."
-        if self._is_windows:
-            confirm_msg = f"This will permanently delete all files in:\n{self._local_rom_path}\n\nThis cannot be undone. Cloud saves are not affected. Are you sure?"
+            self.it = ImageFetcher(self.game['id'], url)
+            self.it.finished.connect(lambda g, p: self.img_label.setPixmap(p.scaled(300, 420, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+            self.it.finished.connect(lambda t=self.it: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
+            self.main_window.active_threads.append(self.it)
+            self.it.start()
             
-        reply = QMessageBox.question(self, "Uninstall", confirm_msg, QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
+    def _start_desc_fetch(self):
+        self.dt = GameDescriptionFetcher(self.client, self.game['id'])
+        self.dt.finished.connect(self.desc_label.setText)
+        self.dt.finished.connect(lambda t=self.dt: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
+        self.main_window.active_threads.append(self.dt)
+        self.dt.start()
+        
+    def uninstall_game(self):
+        msg = f"Are you sure you want to delete {self.game.get('name')}?"
+        if self._is_windows:
+            msg = f"Permanently delete ALL files in:\n{self._local_rom_path}?"
+            
+        if QMessageBox.question(self, "Uninstall", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             try:
-                path = self._local_rom_path
-                if path.exists():
-                    if path.is_dir():
-                        shutil.rmtree(path)
+                p = self._local_rom_path
+                if p.exists():
+                    if p.is_dir():
+                        shutil.rmtree(p)
                     else:
-                        os.remove(path)
+                        os.remove(p)
                     self.main_window.log(f"🗑 {self.game.get('name')} uninstalled")
-                    QMessageBox.information(self, "Success", "Game uninstalled.")
                     self._update_button_states()
                     self.main_window.library_tab.apply_filters()
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete: {e}")
-
+                QMessageBox.critical(self, "Error", str(e))
+                
     def _on_download_clicked(self):
-        if self._is_windows:
-            win_dir = self.config.get("windows_games_dir")
-            if not win_dir:
-                QMessageBox.warning(self, "Windows Games Folder Not Set", 
-                    "Please set your Windows Games folder in Settings before downloading Windows games.")
-                directory = QFileDialog.getExistingDirectory(self, "Select Windows Games Folder")
-                if directory:
-                    self.config.set("windows_games_dir", directory)
-                    win_dir = directory
-                else:
-                    return
-
+        if self._is_windows and not self.config.get("windows_games_dir"):
+            directory = QFileDialog.getExistingDirectory(self, "Select Windows Games Folder")
+            if directory:
+                self.config.set("windows_games_dir", directory)
+            else:
+                return
+        
         files = self.game.get('files', [])
         if files:
             self.download_rom(files[0])
-
-    def _do_blocking_pull(self, save_info, is_retroarch):
+            
+    def _do_blocking_pull(self, save_info, is_ra):
         watcher = self.main_window.watcher
         rom_id = self.game['id']
         title = self.game['name']
-        self._conflict_shown = False
         
         if self._is_windows:
             save_dir = windows_saves.get_save_dir(rom_id)
             if save_dir:
-                latest_save = watcher.client.get_latest_save(rom_id)
-                if latest_save:
-                    result = self._apply_save_blocking(
-                        rom_id, title, latest_save,
-                        save_dir, file_type="save",
-                        is_folder=True)
-                    return result is not False
+                latest = watcher.client.get_latest_save(rom_id)
+                if latest:
+                    return self._apply_save_blocking(rom_id, title, latest, save_dir, "save", True) is not False
             return True
-
-        if is_retroarch and isinstance(save_info, dict):
-            srm_path = save_info.get('srm')
-            state_path = save_info.get('state')
-            psp_folder = save_info.get('psp_folder')
             
-            if psp_folder:
-                latest_save = watcher.client.get_latest_save(rom_id)
-                if latest_save:
-                    result = self._apply_save_blocking(
-                        rom_id, title, latest_save,
-                        str(psp_folder), file_type="save",
-                        is_folder=True)
-                    if result is False: return False
-                
-                state_path = save_info.get('state')
-                if state_path:
-                    latest_state = watcher.client.get_latest_state(rom_id)
-                    if latest_state:
-                        result = self._apply_save_blocking(
-                            rom_id, title, latest_state,
-                            state_path, file_type="state")
-                        if result is False: return False
+        # Standard emulator logic
+        if save_info:
+            if is_ra:
+                if save_info.get('srm'):
+                    latest = watcher.client.get_latest_save(rom_id)
+                    if latest:
+                        self._apply_save_blocking(rom_id, title, latest, save_info['srm'], "save")
+                if save_info.get('state'):
+                    latest = watcher.client.get_latest_state(rom_id)
+                    if latest:
+                        self._apply_save_blocking(rom_id, title, latest, save_info['state'], "state")
             else:
-                if srm_path:
-                    latest_save = watcher.client.get_latest_save(rom_id)
-                    if latest_save:
-                        result = self._apply_save_blocking(
-                            rom_id, title, latest_save, 
-                            srm_path, file_type="save")
-                        if result is False: return False
-
-                if state_path:
-                    latest_state = watcher.client.get_latest_state(rom_id)
-                    if latest_state:
-                        result = self._apply_save_blocking(
-                            rom_id, title, latest_state,
-                            state_path, file_type="state")
-                        if result is False: return False
-        else:
-            local_path = save_info if isinstance(save_info, str) else None
-            if local_path:
-                latest_save = watcher.client.get_latest_save(rom_id)
-                if latest_save:
-                    result = self._apply_save_blocking(
-                        rom_id, title, latest_save,
-                        local_path, file_type="save")
-                    if result is False: return False
+                # Direct emulator
+                latest = watcher.client.get_latest_save(rom_id)
+                if latest:
+                    # Resolve if it's a folder or file
+                    is_folder = os.path.isdir(save_info) if os.path.exists(save_info) else False
+                    self._apply_save_blocking(rom_id, title, latest, save_info, "save", is_folder)
         return True
-
-    def _apply_save_blocking(self, rom_id, title, cloud_obj, 
-                              local_path, file_type="save", is_folder=False):
-        import os, tempfile, zipfile, re
-        from pathlib import Path
+        
+    def _apply_save_blocking(self, rom_id, title, obj, local_path, file_type, is_folder=False):
+        import tempfile
         watcher = self.main_window.watcher
-        server_updated_at = cloud_obj.get('updated_at', '')
+        server_updated_at = obj.get('updated_at', '')
         local_exists = os.path.isdir(local_path) if is_folder else os.path.exists(local_path)
         
-        cache_entry = watcher.sync_cache.get(str(rom_id), {})
-        if isinstance(cache_entry, dict):
-            cached_ts = cache_entry.get(f'{file_type}_updated_at','')
+        cached_entry = watcher.sync_cache.get(str(rom_id), {})
+        if isinstance(cached_entry, dict):
+            cached_ts = cached_entry.get(f'{file_type}_updated_at', '')
         else:
-            cached_ts = cache_entry if file_type=='save' else ''
-        
+            cached_ts = cached_entry if file_type == 'save' else ''
+            
         if cached_ts == server_updated_at and local_exists:
             return True
-        
+            
         tmp = tempfile.mktemp(suffix=f".{file_type}")
-        if file_type == "state":
-            ok = watcher.client.download_state(cloud_obj, tmp)
-        else:
-            ok = watcher.client.download_save(cloud_obj, tmp)
-        
-        if not ok: return True
-        
-        rid_str = str(rom_id)
-        if (local_exists and (rid_str in watcher.sync_cache) and not self._conflict_shown):
-            self._conflict_shown = True
-            msg = QMessageBox(self)
-            msg.setWindowTitle(f"Save Conflict — {title}")
-            msg.setText(f"Your local {file_type} differs from the cloud.\n\nCloud: {server_updated_at[:19]}\nWhich do you want to use?")
-            keep_local = msg.addButton("Keep Local", QMessageBox.RejectRole)
-            use_cloud = msg.addButton("Use Cloud", QMessageBox.AcceptRole)
-            msg.exec()
-            if msg.clickedButton() == keep_local:
+        success = watcher.client.download_state(obj, tmp) if file_type == "state" else watcher.client.download_save(obj, tmp)
+        if not success:
+            return True
+            
+        if local_exists and str(rom_id) in watcher.sync_cache and not self._conflict_shown:
+            behavior = self.config.get("conflict_behavior", "ask")
+            if behavior == "prefer_local":
                 if os.path.exists(tmp): os.remove(tmp)
                 return True
-        
+            elif behavior == "ask":
+                self._conflict_shown = True
+                msg = QMessageBox(self)
+                msg.setWindowTitle(f"Conflict — {title}")
+                msg.setText(f"Local {file_type} differs from cloud.")
+                keep_local = msg.addButton("Keep Local", QMessageBox.RejectRole)
+                use_cloud = msg.addButton("Use Cloud", QMessageBox.AcceptRole)
+                msg.exec()
+                if msg.clickedButton() == keep_local:
+                    if os.path.exists(tmp): os.remove(tmp)
+                    return True
+                    
         dest = Path(local_path)
-        if is_folder: dest.mkdir(parents=True, exist_ok=True)
-        else: dest.parent.mkdir(parents=True, exist_ok=True)
-        
+        if is_folder:
+            dest.mkdir(parents=True, exist_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            
         if dest.exists():
             bak = Path(str(dest) + ".bak")
             try:
-                if is_folder: shutil.copytree(str(dest), str(bak), dirs_exist_ok=True)
-                else: shutil.copy2(str(dest), str(bak))
-            except Exception: pass
-        
+                if is_folder:
+                    shutil.copytree(str(dest), str(bak), dirs_exist_ok=True)
+                else:
+                    shutil.copy2(str(dest), str(bak))
+            except:
+                pass
+                
         try:
             if is_folder or (zipfile.is_zipfile(tmp) and not local_path.endswith(('.srm', '.state'))):
-                with zipfile.ZipFile(tmp, 'r') as z:
-                    z.extractall(local_path)
+                extract_strip_root(tmp, local_path)
             else:
                 shutil.copy2(tmp, str(dest))
-                if (file_type == "state" and dest.suffix == '.state' and not dest.name.endswith('.state.auto')):
+                if file_type == "state" and dest.suffix == '.state' and not dest.name.endswith('.state.auto'):
                     auto_path = dest.with_name(dest.name + '.auto')
                     if auto_path.exists():
                         if auto_path.is_dir(): shutil.rmtree(auto_path)
                         else: auto_path.unlink()
                     dest.rename(auto_path)
-            
+                    
             if not isinstance(watcher.sync_cache.get(str(rom_id)), dict):
                 watcher.sync_cache[str(rom_id)] = {}
             watcher.sync_cache[str(rom_id)][f'{file_type}_updated_at'] = server_updated_at
             watcher.save_cache()
-        except Exception as e: print(f"[Launch] Error applying save: {e}")
         finally:
-            if os.path.exists(tmp): os.remove(tmp)
+            if os.path.exists(tmp):
+                os.remove(tmp)
         return True
-
-    def play_game(self):
-        platform = self.game.get('platform_slug')
         
+    def play_game(self):
         if self._is_windows:
             folder = self._local_rom_path
             if not folder or not folder.exists():
-                QMessageBox.warning(self, "Game Folder Not Found", "The extracted game folder was not found.")
+                QMessageBox.warning(self, "Error", "Game folder not found.")
                 self._update_button_states()
                 return
-            
-            # Check for default exe in windows_saves.json
+                
             saved = windows_saves.get_windows_save(self.game['id'])
             default_exe = saved.get("default_exe") if saved else None
             
-            exe_to_launch = None
             if default_exe and os.path.exists(default_exe):
                 exe_to_launch = default_exe
             else:
-                # Scan recursively including subdirs
-                exes = []
-                for p in folder.rglob("*.exe"):
-                    p_str_lower = str(p).lower()
-                    if not any(ex.lower() in p_str_lower for ex in EXCLUDED_EXES):
-                        exes.append(str(p))
-                
+                exes = [str(p) for p in folder.rglob("*.exe") if not any(e.lower() in str(p).lower() for e in EXCLUDED_EXES)]
                 if not exes:
-                    QMessageBox.warning(self, "No Executables Found", "Could not find any game executables in the folder.")
+                    QMessageBox.warning(self, "Error", "No game executables found.")
                     return
-                
                 if len(exes) == 1:
                     exe_to_launch = exes[0]
                 else:
@@ -1410,10 +1079,10 @@ class GameDetailDialog(QDialog):
                         exe_to_launch = picker.selected_exe
                     else:
                         return
-            
+                        
             if exe_to_launch:
-                if self.config.get("auto_pull_saves", True):
-                    if not self._do_blocking_pull(None, False): return
+                if self.config.get("auto_pull_saves", True) and not self._do_blocking_pull(None, False):
+                    return
                 try:
                     self.main_window.log(f"🚀 Launching Windows Game: {os.path.basename(exe_to_launch)}")
                     proc = subprocess.Popen([exe_to_launch], cwd=os.path.dirname(exe_to_launch))
@@ -1425,182 +1094,183 @@ class GameDetailDialog(QDialog):
                         ))
                     self.accept()
                 except Exception as e:
-                    QMessageBox.critical(self, "Launch Error", f"Failed to launch game: {e}")
+                    QMessageBox.critical(self, "Error", str(e))
             return
-
-        base_rom = self.config.get("base_rom_path")
-        rom_name = self.game.get('fs_name')
+            
         local_rom = self._local_rom_path
         if not local_rom or not local_rom.exists():
-            QMessageBox.warning(self, "ROM Not Found", f"Could not find {rom_name} in {base_rom}.\nPlease download it first.")
+            QMessageBox.warning(self, "Error", "Download the game first.")
             return
-
-        emu_data = None
-        emu_display_name = None
+            
+        emu_data, emu_name, platform = None, None, self.game.get('platform_slug')
         all_emus = emulators.load_emulators()
         assigned_id = self.config.get("platform_assignments", {}).get(platform)
+        
         if assigned_id:
             emu_data = next((e for e in all_emus if e["id"] == assigned_id), None)
             if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
-                emu_display_name = emu_data["name"]
-            else: emu_data = None
-
+                emu_name = emu_data["name"]
+            else:
+                emu_data = None
+                
         if not emu_data:
             emu_data = emulators.get_emulator_for_platform(platform)
             if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
-                emu_display_name = emu_data["name"]
-            else: emu_data = None
-
+                emu_name = emu_data["name"]
+            else:
+                emu_data = None
+                
         if not emu_data:
             emu_data = next((e for e in all_emus if e["id"] == "retroarch"), None)
             if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
-                emu_display_name = emu_data["name"]
-                if platform in RETROARCH_PLATFORMS:
-                    self.main_window.log(f"🎮 No dedicated emulator for {platform}, falling back to RetroArch")
-            else: emu_data = None
-        
+                emu_name = emu_data["name"]
+            else:
+                emu_data = None
+                
         if not emu_data:
-            QMessageBox.warning(self, "Emulator Not Set", f"No emulator path set for {platform}.")
+            QMessageBox.warning(self, "Error", "No valid emulator configured.")
             return
-
+            
         self.main_window.log(f"🎮 Preparing {self.game.get('name')}...")
         self.main_window.ensure_watcher_running()
         
         try:
-            args = []
-            is_retroarch = emu_data["id"] == "retroarch"
-            emu_path = emu_data["executable_path"]
-            if is_retroarch:
-                check_retroarch_autosave(emu_path, platform, self, self.config)
+            exe_path = emu_data["executable_path"]
+            is_ra = emu_data["id"] == "retroarch"
+            watcher = self.main_window.watcher
+            
+            if is_ra:
+                check_retroarch_autosave(exe_path, platform, self, self.config)
                 core_name = RETROARCH_CORES.get(platform)
-                if platform == "psp" or core_name == "ppsspp_libretro.dll": check_ppsspp_assets(emu_path, self)
+                if platform == "psp" or core_name == "ppsspp_libretro.dll":
+                    check_ppsspp_assets(exe_path, self)
                 if core_name:
-                    emu_dir_path = Path(emu_path).parent
-                    core_path = emu_dir_path / "cores" / core_name
+                    core_path = Path(exe_path).parent / "cores" / core_name
                     if core_path.exists():
-                        args = [emu_path, "-L", str(core_path), str(local_rom)]
+                        args = [exe_path, "-L", str(core_path), str(local_rom)]
                     else:
-                        reply = QMessageBox.question(self, "Core Not Found", f"Download {core_name} automatically?", QMessageBox.Yes | QMessageBox.No)
-                        if reply == QMessageBox.Yes: self.start_core_download(core_name, emu_dir_path, platform)
+                        if QMessageBox.question(self, "Error", f"Core {core_name} missing. Download?") == QMessageBox.Yes:
+                            self.start_core_download(core_name, Path(exe_path).parent, platform)
                         return
-                else: args = [emu_path, str(local_rom)]
+                else:
+                    args = [exe_path, str(local_rom)]
             else:
                 raw_args = emu_data.get("launch_args", ["{rom_path}"])
-                args = [emu_path]
-                for arg in raw_args:
-                    processed = arg.replace("{rom_path}", str(local_rom))
-                    if processed != emu_path: args.append(processed)
-
+                args = [exe_path]
+                for a in raw_args:
+                    if a.replace("{rom_path}", str(local_rom)) != exe_path:
+                        args.append(a.replace("{rom_path}", str(local_rom)))
+                        
             if self.config.get("auto_pull_saves", True):
-                watcher = self.main_window.watcher
-                save_info = watcher.get_retroarch_save_path(self.game, {"path": emu_path}) if is_retroarch else watcher.resolve_save_path(emu_display_name, self.game['name'], f"\"{emu_path}\" \"{local_rom}\"", emu_path, platform)[0]
-                if not self._do_blocking_pull(save_info, is_retroarch): return
-
+                if is_ra:
+                    save_info = watcher.get_retroarch_save_path(self.game, {"path": exe_path})
+                else:
+                    res = watcher.resolve_save_path(emu_name, self.game['name'], f"\"{exe_path}\" \"{local_rom}\"", exe_path, platform)
+                    save_info = res[0] if res else None
+                if not self._do_blocking_pull(save_info, is_ra):
+                    return
+                    
             clean_env = os.environ.copy()
-            for key in ["QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH", "QT_QPA_FONTDIR", "QT_QPA_PLATFORM", "QT_STYLE_OVERRIDE"]: clean_env.pop(key, None)
-            proc = subprocess.Popen(args, env=clean_env, cwd=str(Path(emu_path).parent))
-            self.main_window.log(f"🚀 Launched {emu_display_name} (PID: {proc.pid})")
+            for k in ["QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH", "QT_QPA_FONTDIR", "QT_QPA_PLATFORM", "QT_STYLE_OVERRIDE"]:
+                clean_env.pop(k, None)
+                
+            proc = subprocess.Popen(args, env=clean_env, cwd=str(Path(exe_path).parent))
+            self.main_window.log(f"🚀 Launched {emu_name} (PID: {proc.pid})")
             if self.main_window.watcher:
-                QTimer.singleShot(0, lambda: self.main_window.watcher.track_session(proc, emu_display_name, self.game, str(local_rom), emu_path, skip_pull=True))
+                QTimer.singleShot(0, lambda: self.main_window.watcher.track_session(proc, emu_name, self.game, str(local_rom), exe_path, skip_pull=True))
             self.accept()
         except Exception as e:
-            self.main_window.log(f"❌ Launch Error: {e}")
-            QMessageBox.critical(self, "Launch Error", str(e))
-
+            QMessageBox.critical(self, "Error", str(e))
+            
     def download_rom(self, file_data):
         if self._is_windows:
-            target_dir = Path(self.config.get("windows_games_dir"))
-            target_path = target_dir / file_data['file_name']
+            target_path = Path(self.config.get("windows_games_dir")) / file_data['file_name']
         else:
-            suggested = Path(self.config.get("base_rom_path")) / self.game.get('platform_slug', 'unknown')
-            os.makedirs(suggested, exist_ok=True)
-            target_path, _ = QFileDialog.getSaveFileName(self, "Save ROM", str(suggested / file_data['file_name']))
-            if not target_path: return
+            base = self.config.get("base_rom_path")
+            os.makedirs(Path(base) / self.game.get('platform_slug', 'unknown'), exist_ok=True)
+            target_path, _ = QFileDialog.getSaveFileName(self, "Save ROM", str(Path(base) / self.game.get('platform_slug', 'unknown') / file_data['file_name']))
+            if not target_path:
+                return
             target_path = Path(target_path)
-
+            
         self.dl_btn.setVisible(False)
-        self.cancel_btn.setVisible(True)
-        self.progress_bar.setVisible(True)
+        self.can_btn.setVisible(True)
+        self.pbar.setVisible(True)
         self.speed_label.setText("Downloading...")
-        thread = RomDownloader(self.client, self.game['id'], file_data['file_name'], str(target_path))
-        self.main_window.active_threads.append(thread)
-        self.main_window.download_queue.add_download(self.game.get('name'), thread)
-        thread.progress.connect(lambda p, s: (self.progress_bar.setValue(p), self.speed_label.setText(f"Speed: {format_speed(s)}")))
-        thread.finished.connect(self.on_download_complete)
-        thread.finished.connect(lambda: self.main_window.download_queue.remove_download(thread))
-        thread.finished.connect(lambda t=thread: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
-        self.dl_thread = thread
-        thread.start()
-
+        
+        t = RomDownloader(self.client, self.game['id'], file_data['file_name'], str(target_path))
+        self.main_window.active_threads.append(t)
+        self.main_window.download_queue.add_download(self.game.get('name'), t)
+        
+        t.progress.connect(lambda p, s: (self.pbar.setValue(p), self.speed_label.setText(f"Speed: {format_speed(s)}")))
+        t.finished.connect(self.on_download_complete)
+        t.finished.connect(lambda: self.main_window.download_queue.remove_download(t))
+        t.finished.connect(lambda thread=t: self.main_window.active_threads.remove(thread) if thread in self.main_window.active_threads else None)
+        self.dl_thread = t
+        t.start()
+        
     def cancel_dl(self):
         if self.dl_thread:
             self.dl_thread.requestInterruption()
-            self.on_download_complete(False, "Cancelled")
-
+        self.on_download_complete(False, "Cancelled")
+        
     def on_download_complete(self, ok, path):
         if not ok:
-            self.cancel_btn.setVisible(False)
-            self.progress_bar.setVisible(False)
+            self.can_btn.setVisible(False)
+            self.pbar.setVisible(False)
             self.speed_label.setText("")
             self._update_button_states()
-            if path != "Cancelled": QMessageBox.critical(self, "Error", f"Download failed: {path}")
+            if path != "Cancelled":
+                QMessageBox.critical(self, "Error", f"Failed: {path}")
             return
-
+            
         if self._is_windows:
-            target_dir = self.config.get("windows_games_dir")
-            if not target_dir:
-                QMessageBox.warning(self, "Windows Games Folder Not Set", "Please set your Windows Games folder in Settings.")
-                self.cancel_btn.setVisible(False)
-                self.progress_bar.setVisible(False)
+            win_dir = self.config.get("windows_games_dir")
+            if not win_dir:
+                QMessageBox.warning(self, "Error", "Set folder in Settings.")
+                self.can_btn.setVisible(False)
+                self.pbar.setVisible(False)
                 self.speed_label.setText("")
                 return
-            rom_name = self.game.get('fs_name')
-            if rom_name:
-                folder_name = Path(rom_name).stem
-                final_target = Path(target_dir) / folder_name
-                self._local_rom_path = final_target
-                self.extract_thread = ExtractionThread(path, str(final_target))
-                self.main_window.active_threads.append(self.extract_thread)
-                self.extract_thread.progress.connect(self.speed_label.setText)
-                self.extract_thread.finished.connect(self.on_extraction_complete)
-                self.extract_thread.start()
+                
+            self.speed_label.setText("Extracting...")
+            fs_name = self.game.get('fs_name')
+            final_target = Path(win_dir) / Path(fs_name).stem if fs_name else None
+            self._local_rom_path = final_target
+            
+            self.et = ExtractionThread(path, str(final_target))
+            self.main_window.active_threads.append(self.et)
+            self.et.progress.connect(self.pbar.setValue)
+            self.et.finished.connect(self.on_extraction_done)
+            self.et.error.connect(lambda m: QMessageBox.warning(self, "Error", m))
+            self.et.start()
         else:
             self._local_rom_path = Path(path)
-            self.cancel_btn.setVisible(False)
-            self.progress_bar.setVisible(False)
+            self.can_btn.setVisible(False)
+            self.pbar.setVisible(False)
             self.speed_label.setText("")
             self._update_button_states()
-            QMessageBox.information(self, "Success", f"Downloaded to {path}")
             self.main_window.fetch_library_and_populate()
-
-    def on_extraction_complete(self, ok, msg):
-        self.cancel_btn.setVisible(False)
-        self.progress_bar.setVisible(False)
-        self.speed_label.setText("Ready to play!" if ok else "")
+            
+    def on_extraction_done(self, path):
+        self.pbar.setVisible(False)
+        self.speed_label.setText("✅ Ready to play!")
         self._update_button_states()
-        if ok:
-            QMessageBox.information(self, "Success", "Game extracted and ready to play!")
-            self.main_window.fetch_library_and_populate()
-        else: QMessageBox.warning(self, "Extraction Finished", msg)
-
+        self.main_window.fetch_library_and_populate()
+        
     def start_core_download(self, core_name, emu_dir, platform):
-        progress_dlg = QDialog(self)
-        progress_dlg.setWindowTitle(f"Downloading {core_name}...")
-        progress_dlg.setFixedSize(350, 100)
-        dlg_layout = QVBoxLayout(progress_dlg)
-        status_label = QLabel(f"Downloading core for {platform}...")
-        pbar = QProgressBar()
-        dlg_layout.addWidget(status_label)
-        dlg_layout.addWidget(pbar)
-        progress_dlg.setWindowModality(Qt.ApplicationModal)
-        thread = CoreDownloadThread(core_name, emu_dir / "cores")
-        thread.progress.connect(lambda val, speed: (pbar.setValue(val), status_label.setText(f"Speed: {format_speed(speed)}")))
-        def on_finished(success, msg):
-            progress_dlg.close()
-            if success:
-                self.main_window.log(f"✨ Core {core_name} installed.")
-                self.play_game()
-            else: QMessageBox.critical(self, "Download Failed", f"Could not download core: {msg}")
-        thread.finished.connect(on_finished)
-        thread.start()
-        progress_dlg.exec()
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Downloading {core_name}")
+        dlg.setFixedSize(350, 100)
+        l = QVBoxLayout(dlg)
+        status = QLabel(f"Downloading for {platform}...")
+        pb = QProgressBar()
+        l.addWidget(status)
+        l.addWidget(pb)
+        dlg.setWindowModality(Qt.ApplicationModal)
+        
+        t = CoreDownloadThread(core_name, emu_dir / "cores")
+        t.progress.connect(lambda v, s: (pb.setValue(v), status.setText(f"Speed: {format_speed(s)}")))
+        t.finished.connect(lambda success, msg: (dlg.close(), self.play_game() if success else QMessageBox.critical(self, "Error", msg)))
+        t.start()
+        dlg.exec()

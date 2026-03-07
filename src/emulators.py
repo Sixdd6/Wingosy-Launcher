@@ -15,7 +15,8 @@ DEFAULT_EMULATORS = [
             "srm_dir": "",
             "state_dir": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "eden",
@@ -27,7 +28,8 @@ DEFAULT_EMULATORS = [
             "mode": "folder",
             "path": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "rpcs3",
@@ -39,7 +41,8 @@ DEFAULT_EMULATORS = [
             "mode": "folder",
             "path": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "dolphin",
@@ -51,7 +54,8 @@ DEFAULT_EMULATORS = [
             "mode": "file",
             "path": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "pcsx2",
@@ -63,7 +67,8 @@ DEFAULT_EMULATORS = [
             "mode": "file",
             "path": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "cemu",
@@ -75,7 +80,8 @@ DEFAULT_EMULATORS = [
             "mode": "folder",
             "path": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "azahar",
@@ -87,7 +93,8 @@ DEFAULT_EMULATORS = [
             "mode": "folder",
             "path": ""
         },
-        "user_defined": False
+        "user_defined": False,
+        "sync_enabled": True
     },
     {
         "id": "windows_native",
@@ -99,7 +106,8 @@ DEFAULT_EMULATORS = [
             "mode": "none"
         },
         "user_defined": False,
-        "is_native": True
+        "is_native": True,
+        "sync_enabled": True
     }
 ]
 
@@ -116,12 +124,19 @@ def load_emulators_raw():
         with open(EMULATORS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             
-            # Problem 2: Filter out Yuzu
-            initial_count = len(data.get("emulators", []))
+            # Filter out Yuzu
+            emus = data.get("emulators", [])
+            initial_count = len(emus)
             data["emulators"] = [
-                e for e in data.get("emulators", [])
+                e for e in emus
                 if not (e.get("id", "").lower() == "yuzu" or "yuzu" in e.get("name", "").lower())
             ]
+            
+            # Ensure sync_enabled exists for all
+            for e in data["emulators"]:
+                if "sync_enabled" not in e:
+                    e["sync_enabled"] = True
+            
             if len(data["emulators"]) < initial_count:
                 logging.info("Removed deprecated Yuzu entry from emulators")
                 save_emulators_raw(data)

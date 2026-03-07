@@ -3,7 +3,8 @@ from pathlib import Path
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QScrollArea, QFormLayout, 
                              QLineEdit, QFileDialog, QMessageBox,
-                             QDialog, QComboBox, QDialogButtonBox)
+                             QDialog, QComboBox, QDialogButtonBox, QTabWidget,
+                             QSpinBox, QCheckBox)
 from PySide6.QtCore import Qt
 
 from src.ui.threads import (DirectDownloader, DolphinDownloader,
@@ -31,9 +32,9 @@ class EmulatorEditDialog(QDialog):
         self.path_input.setPlaceholderText("C:/Path/to/emulator.exe")
         if emu_data: self.path_input.setText(emu_data.get("executable_path", ""))
         path_layout.addWidget(self.path_input)
-        browse_btn = QPushButton("Browse")
-        browse_btn.clicked.connect(self.browse_exe)
-        path_layout.addWidget(browse_btn)
+        self.browse_exe_btn = QPushButton("Browse")
+        self.browse_exe_btn.clicked.connect(self.browse_exe)
+        path_layout.addWidget(self.browse_exe_btn)
         form.addRow("Executable Path:", path_layout)
         
         self.slugs_input = QLineEdit()
@@ -119,7 +120,6 @@ class EmulatorEditDialog(QDialog):
             
         emu_id = name.lower().replace(" ", "_")
         
-        # Check for conflicts if adding new
         if not self.emu_data:
             all_emus = emulators.load_emulators()
             existing = next((e for e in all_emus if e["id"] == emu_id), None)
@@ -130,9 +130,8 @@ class EmulatorEditDialog(QDialog):
         mode = self.mode_combo.currentData()
         save_res = {"mode": mode}
         if mode != "none":
-            if mode == "folder": save_res["path"] = self.save_path_input.text().strip()
-            else:
-                save_res["path"] = self.save_path_input.text().strip()
+            save_res["path"] = self.save_path_input.text().strip()
+            if mode == "direct_file":
                 save_res["extension"] = self.ext_input.text().strip()
 
         new_data = {
@@ -142,18 +141,20 @@ class EmulatorEditDialog(QDialog):
             "launch_args": self.args_input.text().split(),
             "platform_slugs": slugs,
             "save_resolution": save_res,
-            "user_defined": True
+            "user_defined": True,
+            "sync_enabled": True
         }
         self.result_data = new_data
         self.accept()
 
-class EmulatorsTab(QWidget):
+class EmuListWidget(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
         self.config = main_window.config
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
         
         # Global Paths
         paths_widget = QWidget()
@@ -181,13 +182,12 @@ class EmulatorsTab(QWidget):
         layout.addWidget(paths_widget)
         
         # Emulator List
-        layout.addWidget(QLabel("<h3>Installed Emulators</h3>"))
+        layout.addSpacing(10)
         self.emu_list_layout = QVBoxLayout()
         self.emu_list_layout.setAlignment(Qt.AlignTop)
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setMinimumHeight(300)
         emulator_container = QWidget()
         emulator_container.setLayout(self.emu_list_layout)
         scroll_area.setWidget(emulator_container)
@@ -195,25 +195,11 @@ class EmulatorsTab(QWidget):
         
         # Add Custom Emu Button
         add_emu_btn = QPushButton("＋ Add Custom Emulator")
-        add_emu_btn.setStyleSheet("background: #1565c0; color: white; padding: 8px; font-weight: bold;")
+        add_emu_btn.setStyleSheet("background: #1565c0; color: white; padding: 10px; font-weight: bold;")
         add_emu_btn.clicked.connect(self.add_custom_emulator)
         layout.addWidget(add_emu_btn)
         
-        # Platform Assignments Section
-        layout.addSpacing(20)
-        layout.addWidget(QLabel("<h3>Platform Assignments</h3>"))
-        self.assign_layout = QFormLayout()
-        assign_widget = QWidget()
-        assign_widget.setLayout(self.assign_layout)
-        
-        assign_scroll = QScrollArea()
-        assign_scroll.setWidgetResizable(True)
-        assign_scroll.setMinimumHeight(200)
-        assign_scroll.setWidget(assign_widget)
-        layout.addWidget(assign_scroll)
-        
         self.populate_emus()
-        self.populate_assignments()
 
     def browse_directory(self, key, line_edit):
         directory = QFileDialog.getExistingDirectory(self, "Select Folder")
@@ -244,10 +230,8 @@ class EmulatorsTab(QWidget):
             row.setStyleSheet("background: #252525; border-radius: 5px; margin: 2px;")
             row_layout = QHBoxLayout(row)
             
-            # Health Indicator
             path = emu_data.get("executable_path", "")
             indicator = "✅" if path and os.path.exists(path) else ""
-            
             indicator_label = QLabel(indicator)
             indicator_label.setFixedWidth(24)
             row_layout.addWidget(indicator_label)
@@ -260,12 +244,10 @@ class EmulatorsTab(QWidget):
             path_label.setStyleSheet("color: #888;")
             row_layout.addWidget(path_label, 1)
             
-            # Action Buttons
             if is_user:
                 btn_edit = QPushButton("✏️ Edit")
                 btn_edit.clicked.connect(lambda checked, eid=emu_id: self.edit_custom_emulator(eid))
                 row_layout.addWidget(btn_edit)
-                
                 btn_del = QPushButton("🗑 Remove")
                 btn_del.setStyleSheet("color: #ff5252;")
                 btn_del.clicked.connect(lambda checked, eid=emu_id: self.remove_emulator(eid))
@@ -274,54 +256,14 @@ class EmulatorsTab(QWidget):
                 btn_path = QPushButton("Path")
                 btn_path.clicked.connect(lambda checked, eid=emu_id: self.edit_emulator_path(eid))
                 row_layout.addWidget(btn_path)
-                
                 btn_latest = QPushButton("⬇️ Latest")
                 btn_latest.clicked.connect(lambda checked, n=name: self.main_window.dl_emu(n))
                 row_layout.addWidget(btn_latest)
-                
                 btn_fw = QPushButton("📂 Firmware")
                 btn_fw.clicked.connect(lambda checked, n=name: self.main_window.open_fw(n))
                 row_layout.addWidget(btn_fw)
             
             self.emu_list_layout.addWidget(row)
-
-    def populate_assignments(self):
-        for i in reversed(range(self.assign_layout.count())):
-            item = self.assign_layout.itemAt(i)
-            if item and item.widget():
-                item.widget().setParent(None)
-        
-        all_games = getattr(self.main_window, "all_games", [])
-        platforms = sorted(list(set(g.get("platform_slug") for g in all_games if g.get("platform_slug"))))
-        
-        all_emus = emulators.load_emulators()
-        assignments = self.config.get("platform_assignments", {})
-        
-        for slug in platforms:
-            combo = QComboBox()
-            # Find emus that support this slug
-            matching_emus = [e for e in all_emus if slug in e.get("platform_slugs", [])]
-            
-            for emu in matching_emus:
-                combo.addItem(emu["name"], emu["id"])
-            
-            assigned_id = assignments.get(slug)
-            if assigned_id:
-                idx = combo.findData(assigned_id)
-                if idx >= 0: combo.setCurrentIndex(idx)
-            
-            combo.currentIndexChanged.connect(lambda idx, s=slug, c=combo: self.save_assignment(s, c.itemData(idx)))
-            self.assign_layout.addRow(slug.upper() + ":", combo)
-
-    def save_assignment(self, platform_slug, emu_id):
-        all_emus = emulators.load_emulators()
-        emu = next((e for e in all_emus if e["id"] == emu_id), None)
-        emu_name = emu["name"] if emu else emu_id
-        
-        assignments = self.config.get("platform_assignments", {})
-        assignments[platform_slug] = emu_id
-        self.config.set("platform_assignments", assignments)
-        self.main_window.log(f"🎮 {platform_slug.upper()} assigned to {emu_name}")
 
     def add_custom_emulator(self):
         dialog = EmulatorEditDialog(parent=self)
@@ -331,44 +273,38 @@ class EmulatorsTab(QWidget):
             emulators.save_emulators(all_emus)
             self.main_window.log(f"✅ Added emulator: {dialog.result_data['name']}")
             self.populate_emus()
-            self.populate_assignments()
+            self.main_window.emulators_tab.refresh_all()
 
     def edit_custom_emulator(self, emu_id):
         all_emus = emulators.load_emulators()
         emu_idx = next((i for i, e in enumerate(all_emus) if e["id"] == emu_id), -1)
         if emu_idx == -1: return
-        
         dialog = EmulatorEditDialog(emu_data=all_emus[emu_idx], parent=self)
         if dialog.exec() == QDialog.Accepted:
             all_emus[emu_idx] = dialog.result_data
             emulators.save_emulators(all_emus)
             self.main_window.log(f"✅ Updated emulator: {dialog.result_data['name']}")
             self.populate_emus()
-            self.populate_assignments()
+            self.main_window.emulators_tab.refresh_all()
 
     def remove_emulator(self, emu_id):
         all_emus = emulators.load_emulators()
         emu = next((e for e in all_emus if e["id"] == emu_id), None)
         if not emu: return
-        
         reply = QMessageBox.question(self, "Remove Emulator", f"Are you sure you want to remove {emu['name']}?")
         if reply == QMessageBox.Yes:
             all_emus = [e for e in all_emus if e["id"] != emu_id]
             emulators.save_emulators(all_emus)
             self.main_window.log(f"🗑 Removed emulator: {emu['name']}")
             self.populate_emus()
-            self.populate_assignments()
+            self.main_window.emulators_tab.refresh_all()
 
     def edit_emulator_path(self, emu_id):
         all_emus = emulators.load_emulators()
         emu = next((e for e in all_emus if e["id"] == emu_id), None)
         if not emu: return
-
-        # Try to find existing path
         start_dir = os.path.dirname(emu.get("executable_path")) if emu.get("executable_path") else ""
-        if not start_dir or not os.path.exists(start_dir):
-            start_dir = self.config.get("base_emu_path")
-
+        if not start_dir or not os.path.exists(start_dir): start_dir = self.config.get("base_emu_path")
         file_path, _ = QFileDialog.getOpenFileName(self, f"Select {emu['name']} Executable", start_dir, "Executables (*.exe)")
         if file_path:
             emu["executable_path"] = file_path
@@ -376,3 +312,151 @@ class EmulatorsTab(QWidget):
             self.main_window.log(f"✅ {emu['name']} path updated.")
             self.populate_emus()
             self.main_window.library_tab.apply_filters()
+
+class SyncSettingsWidget(QWidget):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.config = main_window.config
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        
+        layout.addWidget(QLabel("<h2>Emulator Save Sync</h2>"))
+        layout.addWidget(QLabel("<p style='color:#888;'>Choose which emulators sync saves to RomM.</p>"))
+        self.emu_sync_layout = QVBoxLayout()
+        self.emu_sync_layout.setAlignment(Qt.AlignTop)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(200)
+        container = QWidget()
+        container.setLayout(self.emu_sync_layout)
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+        
+        layout.addSpacing(20)
+        layout.addWidget(QLabel("<h2>Conflict Resolution</h2>"))
+        self.conflict_combo = QComboBox()
+        self.conflict_combo.addItem("Always Ask", "ask")
+        self.conflict_combo.addItem("Prefer Cloud Save", "prefer_cloud")
+        self.conflict_combo.addItem("Prefer Local Save", "prefer_local")
+        behavior = self.config.get("conflict_behavior", "ask")
+        idx = self.conflict_combo.findData(behavior)
+        if idx >= 0: self.conflict_combo.setCurrentIndex(idx)
+        self.conflict_combo.currentIndexChanged.connect(self.save_conflict_behavior)
+        layout.addWidget(self.conflict_combo)
+        
+        layout.addSpacing(20)
+        layout.addWidget(QLabel("<h2>Auto-Sync Interval</h2>"))
+        self.interval_spin = QSpinBox()
+        self.interval_spin.setRange(30, 600)
+        self.interval_spin.setSingleStep(30)
+        self.interval_spin.setSuffix(" seconds")
+        self.interval_spin.setValue(self.config.get("sync_interval_seconds", 120))
+        self.interval_spin.valueChanged.connect(lambda v: self.config.set("sync_interval_seconds", v))
+        layout.addWidget(self.interval_spin)
+        layout.addStretch()
+        self.populate_emu_sync()
+
+    def populate_emu_sync(self):
+        for i in reversed(range(self.emu_sync_layout.count())):
+            item = self.emu_sync_layout.itemAt(i)
+            if item and item.widget(): item.widget().setParent(None)
+        all_emus = emulators.load_emulators()
+        for emu in all_emus:
+            row = QWidget()
+            row.setStyleSheet("background: #252525; border-radius: 5px; margin: 2px;")
+            rl = QHBoxLayout(row)
+            check = QCheckBox()
+            check.setChecked(emu.get("sync_enabled", True))
+            check.toggled.connect(lambda checked, eid=emu["id"]: self.toggle_emu_sync(eid, checked))
+            rl.addWidget(check)
+            rl.addWidget(QLabel(f"<b>{emu['name']}</b>"))
+            rl.addStretch()
+            self.emu_sync_layout.addWidget(row)
+
+    def toggle_emu_sync(self, emu_id, enabled):
+        all_emus = emulators.load_emulators()
+        emu = next((e for e in all_emus if e["id"] == emu_id), None)
+        if emu:
+            emu["sync_enabled"] = enabled
+            emulators.save_emulators(all_emus)
+            self.main_window.log(f"🔄 Sync {'enabled' if enabled else 'disabled'} for {emu['name']}")
+            if emu_id == "windows_native": self.config.set("windows_sync_enabled", enabled)
+
+    def save_conflict_behavior(self, index):
+        val = self.conflict_combo.itemData(index)
+        self.config.set("conflict_behavior", val)
+        self.main_window.log(f"🔄 Conflict behavior set to: {self.conflict_combo.currentText()}")
+
+class PlatformAssignWidget(QWidget):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.config = main_window.config
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.addWidget(QLabel("<h2>Platform Assignments</h2>"))
+        layout.addWidget(QLabel("<p style='color:#888;'>Assign which emulator to use for each platform.</p>"))
+        self.assign_layout = QFormLayout()
+        container = QWidget()
+        container.setLayout(self.assign_layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
+        self.populate_assignments()
+
+    def populate_assignments(self):
+        for i in reversed(range(self.assign_layout.count())):
+            item = self.assign_layout.itemAt(i)
+            if item and item.widget(): item.widget().setParent(None)
+        all_games = getattr(self.main_window, "all_games", [])
+        platforms = sorted(list(set(g.get("platform_slug") for g in all_games if g.get("platform_slug"))))
+        all_emus = emulators.load_emulators()
+        assignments = self.config.get("platform_assignments", {})
+        for slug in platforms:
+            combo = QComboBox()
+            matching_emus = [e for e in all_emus if slug in e.get("platform_slugs", [])]
+            for emu in matching_emus: combo.addItem(emu["name"], emu["id"])
+            assigned_id = assignments.get(slug)
+            if assigned_id:
+                idx = combo.findData(assigned_id)
+                if idx >= 0: combo.setCurrentIndex(idx)
+            combo.currentIndexChanged.connect(lambda idx, s=slug, c=combo: self.save_assignment(s, c.itemData(idx)))
+            self.assign_layout.addRow(QLabel(f"<b>{slug.upper()}</b>"), combo)
+
+    def save_assignment(self, platform_slug, emu_id):
+        all_emus = emulators.load_emulators()
+        emu = next((e for e in all_emus if e["id"] == emu_id), None)
+        assignments = self.config.get("platform_assignments", {})
+        assignments[platform_slug] = emu_id
+        self.config.set("platform_assignments", assignments)
+        self.main_window.log(f"🎮 {platform_slug.upper()} assigned to {emu['name'] if emu else emu_id}")
+
+class EmulatorsTab(QWidget):
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        self.sub_tabs = QTabWidget()
+        self.sub_tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #3a3a3a; border-radius: 4px; }
+            QTabBar::tab { background: #2a2a2a; color: #aaaaaa; padding: 6px 16px; font-size: 12px; border: none; border-bottom: 2px solid transparent; }
+            QTabBar::tab:selected { color: #ffffff; border-bottom: 2px solid #0d6efd; background: #333333; }
+            QTabBar::tab:hover { background: #333333; color: #dddddd; }
+        """)
+        self.emu_list = EmuListWidget(main_window)
+        self.sync_settings = SyncSettingsWidget(main_window)
+        self.platform_assign = PlatformAssignWidget(main_window)
+        self.sub_tabs.addTab(self.emu_list, "🎮 Emulators")
+        self.sub_tabs.addTab(self.sync_settings, "🔄 Sync")
+        self.sub_tabs.addTab(self.platform_assign, "🕹 Platforms")
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.sub_tabs)
+
+    def populate_emus(self): self.emu_list.populate_emus()
+    def refresh_all(self):
+        self.emu_list.populate_emus()
+        self.sync_settings.populate_emu_sync()
+        self.platform_assign.populate_assignments()

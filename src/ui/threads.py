@@ -74,9 +74,12 @@ class GameDescriptionFetcher(QThread):
         except Exception:
             self.finished.emit("No description available.")
 
+from src.utils import extract_strip_root
+
 class ExtractionThread(QThread):
-    progress = Signal(str)
-    finished = Signal(bool, str)
+    progress = Signal(int)
+    finished = Signal(str)
+    error = Signal(str)
 
     def __init__(self, archive_path, target_dir):
         super().__init__()
@@ -85,25 +88,31 @@ class ExtractionThread(QThread):
 
     def run(self):
         try:
-            self.progress.emit("Extracting...")
-            self.target_dir.mkdir(parents=True, exist_ok=True)
             ext = self.archive_path.suffix.lower()
-
             if ext == ".zip":
-                with zipfile.ZipFile(self.archive_path, 'r') as z:
-                    z.extractall(self.target_dir)
+                extract_strip_root(str(self.archive_path), str(self.target_dir), self.progress.emit)
             elif ext in [".7z", ".iso"]:
                 import py7zr
                 try:
                     with py7zr.SevenZipFile(self.archive_path, mode='r') as z:
                         z.extractall(self.target_dir)
+                    
+                    # Fix 4: Strip root after 7z extraction
+                    contents = list(Path(self.target_dir).iterdir())
+                    if len(contents) == 1 and contents[0].is_dir():
+                        inner = contents[0]
+                        tmp = Path(self.target_dir) / "_tmp_extract"
+                        inner.rename(tmp)
+                        for item in tmp.iterdir():
+                            item.rename(Path(self.target_dir) / item.name)
+                        tmp.rmdir()
                 except Exception as e:
                     if ext == ".iso":
-                        self.finished.emit(False, f"Could not extract ISO — user must handle manually: {e}")
+                        self.error.emit(f"Could not extract ISO — user must handle manually: {e}")
                         return
                     raise e
             else:
-                self.finished.emit(False, f"Unsupported archive format: {ext}")
+                self.error.emit(f"Unsupported archive format: {ext}")
                 return
 
             # Cleanup
@@ -112,9 +121,9 @@ class ExtractionThread(QThread):
             except Exception:
                 pass
 
-            self.finished.emit(True, str(self.target_dir))
+            self.finished.emit(str(self.target_dir))
         except Exception as e:
-            self.finished.emit(False, str(e))
+            self.error.emit(str(e))
 
 class BaseDownloader(QThread):
     progress = Signal(int, float)
@@ -156,8 +165,7 @@ class BaseDownloader(QThread):
     def extract_archive(self, file_path, dest_dir):
         try:
             if file_path.endswith('.zip'):
-                with zipfile.ZipFile(file_path, 'r') as z:
-                    z.extractall(dest_dir)
+                extract_strip_root(file_path, dest_dir)
                 try: os.remove(file_path)
                 except Exception: pass
                 return True, dest_dir
@@ -177,6 +185,16 @@ class BaseDownloader(QThread):
                     except Exception: pass
                 
                 if extracted:
+                    # Strip root for 7z too
+                    contents = list(Path(dest_dir).iterdir())
+                    if len(contents) == 1 and contents[0].is_dir():
+                        inner = contents[0]
+                        tmp = Path(dest_dir) / "_tmp_extract"
+                        inner.rename(tmp)
+                        for item in tmp.iterdir():
+                            item.rename(Path(dest_dir) / item.name)
+                        tmp.rmdir()
+                        
                     try: os.remove(file_path)
                     except Exception: pass
                     return True, dest_dir
@@ -185,6 +203,7 @@ class BaseDownloader(QThread):
             return True, file_path
         except Exception as e:
             return True, file_path + f" (Extraction failed: {e})"
+
 
 class DirectDownloader(BaseDownloader):
     def __init__(self, url, target_dir):
