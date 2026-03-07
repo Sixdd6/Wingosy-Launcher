@@ -18,6 +18,7 @@ from src.ui.threads import (UpdaterThread, SelfUpdateThread,
                              ConnectionTestThread, RomDownloader, CoreDownloadThread, ImageFetcher, ConflictResolveThread, GameDescriptionFetcher)
 from src.ui.widgets import format_speed, format_size, get_resource_path
 from src.platforms import RETROARCH_PLATFORMS, RETROARCH_CORES, platform_matches
+from src import emulators
 from src.utils import read_retroarch_cfg, write_retroarch_cfg_values
 
 _retroarch_autosave_checked = False
@@ -323,22 +324,6 @@ class SettingsDialog(QDialog):
         log_level_layout.addWidget(self.log_level_combo)
         log_level_layout.addStretch()
         self.settings_layout.addLayout(log_level_layout)
-        
-        self.settings_layout.addWidget(QLabel("<b>Preferred Switch Emulator:</b>"))
-        self.switch_pref = QComboBox()
-        
-        # Populate Switch options from the new emulators module
-        all_emus = emulators.load_emulators()
-        switch_emus = [e for e in all_emus if "switch" in e.get("platform_slugs", [])]
-        for e in switch_emus:
-            self.switch_pref.addItem(e["name"], e["id"])
-            
-        current_switch_id = self.config.get("preferred_emulators", {}).get("switch")
-        index = self.switch_pref.findData(current_switch_id)
-        if index >= 0:
-            self.switch_pref.setCurrentIndex(index)
-        self.switch_pref.currentIndexChanged.connect(self.set_switch_pref)
-        self.settings_layout.addWidget(self.switch_pref)
         
         self.settings_layout.addSpacing(10)
         self.update_btn = QPushButton("Check for Updates")
