@@ -928,19 +928,18 @@ class GameDetailDialog(QDialog):
 
         emu_data = None
         emu_display_name = None
-        
-        # 1. Check for preferred emulator by ID (new system)
-        preferred_id = self.config.get("preferred_emulators", {}).get(platform)
         all_emus = emulators.load_emulators()
         
-        if preferred_id:
-            emu_data = next((e for e in all_emus if e["id"] == preferred_id), None)
+        # 1. Check platform_assignments FIRST (new feature)
+        assigned_id = self.config.get("platform_assignments", {}).get(platform)
+        if assigned_id:
+            emu_data = next((e for e in all_emus if e["id"] == assigned_id), None)
             if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
                 emu_display_name = emu_data["name"]
             else:
-                emu_data = None # Invalid or missing exe
+                emu_data = None # Assigned emu is invalid or missing
 
-        # 2. Fallback: find first emulator that supports this platform
+        # 2. Fallback: find first emulator that supports this platform (schema order)
         if not emu_data:
             emu_data = emulators.get_emulator_for_platform(platform)
             if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):

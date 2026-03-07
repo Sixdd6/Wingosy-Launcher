@@ -19,6 +19,7 @@ class ConfigManager:
         "auto_pull_saves": True,
         "cards_per_row": 6,
         "log_level": "INFO",
+        "platform_assignments": {},
         "retroarch_save_mode": "srm",
         "device_id": "wingosy-win-default",
         "base_rom_path": str(Path.home() / "Games" / "ROMs"),
