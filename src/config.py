@@ -23,6 +23,7 @@ class ConfigManager:
         "retroarch_save_mode": "srm",
         "device_id": "wingosy-win-default",
         "windows_games_dir": "",
+        "pcgamingwiki_enabled": True,
         "base_rom_path": str(Path.home() / "Games" / "ROMs"),
         "base_emu_path": str(Path.home() / "Games" / "Emulators"),
         "preferred_emulators": {

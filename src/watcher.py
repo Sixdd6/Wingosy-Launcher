@@ -125,7 +125,7 @@ class WingosyWatcher(QThread):
                 logging.error(f"[Watcher] Unexpected error in _safe_folder_hash: {e}")
                 return None
 
-    def track_session(self, proc, emu_display_name, game_data, local_rom_path, emu_path, skip_pull=False):
+    def track_session(self, proc, emu_display_name, game_data, local_rom_path, emu_path, skip_pull=False, windows_save_dir=None):
         """
         Explicitly track a process launched by the UI.
         """
@@ -136,11 +136,33 @@ class WingosyWatcher(QThread):
             title = game_data['name']
             platform = game_data.get('platform_slug')
 
+            # Handle Windows Native Save Sync initial state
+            if windows_save_dir:
+                h = self._safe_folder_hash(windows_save_dir) if os.path.exists(windows_save_dir) else None
+                init_mtime = self._get_folder_mtime(windows_save_dir) if os.path.exists(windows_save_dir) else time.time()
+                
+                session_data = {
+                    'emu': "Windows (Native)",
+                    'rom_id': rom_id,
+                    'save_path': windows_save_dir,
+                    'title': title,
+                    'initial_hash': h,
+                    'initial_mtime': init_mtime,
+                    'is_folder': True,
+                    'start_time': time.time(),
+                    'windows_save_dir': windows_save_dir,
+                    'is_windows_native': True
+                }
+                self.active_sessions[pid] = session_data
+                self.log_signal.emit(f"🎮 Tracking Windows Game: {title} (PID: {pid})")
+                return
+
             # 1. Resolve Save Path
             res = None
             try:
                 res = self.resolve_save_path(emu_display_name, title, full_cmd, emu_path, platform, proc=psutil.Process(pid))
             except Exception as e:
+                import traceback
                 logging.error(f"[Watcher] resolve_save_path failed for {title}:\n{traceback.format_exc()}")
             
             if res:
@@ -161,7 +183,7 @@ class WingosyWatcher(QThread):
                     is_folder = False # We upload a zip of files later
 
                 # Tracking both mode for RetroArch
-                is_retroarch_game = ("RetroArch" in emu_display_name or platform == "multi" or platform in RETROARCH_PLATFORMS)
+                is_retroarch_game = ("RetroArch" in emu_display_name or platform == "multi" or platform in ["nes", "snes", "n64", "gb", "gbc", "gba", "genesis", "mastersystem", "segacd", "gamegear", "atari2600", "psx", "psp"])
                 self._pull_is_retroarch = is_retroarch_game
 
                 if emu_display_name == "Multi-Console (RetroArch)":
@@ -260,6 +282,7 @@ class WingosyWatcher(QThread):
                 self.log_signal.emit(f"⚠️ Identified {title} but could not resolve local save path.")
                 
         except Exception as e:
+            import traceback
             logging.error(f"❌ Error setting up tracking: {e}\n{traceback.format_exc()}")
 
     def _clean_romm_filename(self, filename: str) -> str:
@@ -684,6 +707,8 @@ class WingosyWatcher(QThread):
     def handle_exit(self, data):
         rom_id = data.get('rom_id')
         title = data.get('title')
+        is_windows_native = data.get('is_windows_native', False)
+        windows_save_dir = data.get('windows_save_dir')
         
         # Guard against persistent failure for a specific game
         if rom_id and self.session_errors.get(str(rom_id), 0) >= 5:
@@ -759,6 +784,8 @@ class WingosyWatcher(QThread):
                     h_at_exit = self._safe_folder_hash(data['save_path'])
                 elif is_retroarch:
                     h_at_exit = self._hash_retroarch_game(str(save_path), data['is_folder'])
+                elif is_windows_native:
+                    h_at_exit = self._safe_folder_hash(windows_save_dir)
                 else:
                     h_at_exit = calculate_folder_hash(str(save_path)) if data['is_folder'] else calculate_file_hash(str(save_path))
             except Exception as e:
@@ -773,6 +800,8 @@ class WingosyWatcher(QThread):
                     new_h = self._safe_folder_hash(data['save_path'])
                 elif is_retroarch:
                     new_h = self._hash_retroarch_game(str(save_path), data['is_folder'])
+                elif is_windows_native:
+                    new_h = self._safe_folder_hash(windows_save_dir)
                 else:
                     new_h = calculate_folder_hash(str(save_path)) if data['is_folder'] else calculate_file_hash(str(save_path))
             except Exception as e:
@@ -814,7 +843,27 @@ class WingosyWatcher(QThread):
             self.log_signal.emit(f"📝 Changes detected! Syncing...")
             
             success_overall = True
-            if is_retroarch and psp_folder:
+            
+            if is_windows_native and windows_save_dir:
+                # === Windows Native Save Sync: Zip entire save_dir ===
+                temp_zip = str(self.tmp_dir / f"sync_{rom_id}.zip")
+                try:
+                    zip_path(str(windows_save_dir), temp_zip)
+                    success, msg = self.client.upload_save(rom_id, "Windows (Native)", temp_zip)
+                    if success:
+                        self.log_signal.emit(f"✨ {title} save synced!")
+                        self.sync_cache.pop(str(rom_id), None)
+                        self.save_cache()
+                    else:
+                        self.log_signal.emit(f"❌ Windows sync failed: {msg}")
+                        success_overall = False
+                except Exception as e:
+                    logging.error(f"[Watcher] Windows sync error: {e}")
+                    success_overall = False
+                finally:
+                    if os.path.exists(temp_zip): os.remove(temp_zip)
+
+            elif is_retroarch and psp_folder:
                 # === PSP Folder Mode: Upload SAVEDATA zip + State file ===
                 rom_id = data['rom_id']
                 emu = data['emu']
@@ -890,7 +939,7 @@ class WingosyWatcher(QThread):
                             # Remove specific field from new cache format
                             entry = self.sync_cache.get(str(rom_id))
                             if isinstance(entry, dict):
-                                entry.pop('state_updated_at', None)
+                                entry.pop('save_updated_at', None)
                             else:
                                 self.sync_cache.pop(f"{rom_id}:state", None) # Legacy
                         else: 

@@ -16,6 +16,21 @@ try:
 except ImportError:
     HAS_PY7ZR = False
 
+from src import pcgamingwiki
+
+class WikiFetcherThread(QThread):
+    finished = Signal(list)
+    def __init__(self, game_title, windows_games_dir=""):
+        super().__init__()
+        self.game_title = game_title
+        self.win_dir = windows_games_dir
+    def run(self):
+        try:
+            results = pcgamingwiki.fetch_save_locations(self.game_title, self.win_dir)
+            self.finished.emit(results)
+        except Exception:
+            self.finished.emit([])
+
 class ImageFetcher(QThread):
     finished = Signal(int, QPixmap)
     def __init__(self, game_id, url):
