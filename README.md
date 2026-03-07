@@ -1,4 +1,6 @@
-![Wingosy in action](gif_example.gif)
+<p align="center">
+  <img src="gif_example.gif" alt="Wingosy in action" width="850">
+</p>
 
 # Wingosy
 > A game launcher and cloud save sync client for RomM on Windows. Browse your library, launch games, and keep saves backed up automatically.
@@ -73,4 +75,4 @@ That's it. No Python, no dependencies.
     pyinstaller wingosy.spec
 
 ## License
-MIT
+GPL-3.0
