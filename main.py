@@ -94,6 +94,10 @@ def main():
     
     config = ConfigManager()
     
+    # Migrate emulator paths to new emulators.json schema if needed
+    from src.emulators import migrate_old_config
+    migrate_old_config(config)
+    
     # Set log level from config
     log_level_str = config.get("log_level", "INFO").upper()
     log_level = getattr(logging, log_level_str, logging.INFO)

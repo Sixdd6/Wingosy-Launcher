@@ -670,6 +670,75 @@ class TestLogging:
             assert logging.getLogger().getEffectiveLevel() == target_level
 
 
+class TestEmulatorSchema:
+    def setup_method(self):
+        import tempfile
+        from pathlib import Path
+        from src import emulators
+        self.test_dir = tempfile.TemporaryDirectory()
+        self.home_path = Path(self.test_dir.name)
+        
+        # Patch EMULATORS_FILE to point to our temp dir
+        self.orig_file = emulators.EMULATORS_FILE
+        emulators.EMULATORS_FILE = self.home_path / "emulators.json"
+        self.emulators = emulators
+
+    def teardown_method(self):
+        self.test_dir.cleanup()
+        self.emulators.EMULATORS_FILE = self.orig_file
+
+    def test_default_emulators_file_created(self):
+        """File should be created on first load if missing."""
+        assert not self.emulators.EMULATORS_FILE.exists()
+        emus = self.emulators.load_emulators()
+        assert self.emulators.EMULATORS_FILE.exists()
+        assert len(emus) > 0
+
+    def test_get_emulator_for_platform(self):
+        """Should find correct emulator for a slug."""
+        # SNES is in RetroArch by default
+        emu = self.emulators.get_emulator_for_platform("snes")
+        assert emu is not None
+        assert emu["id"] == "retroarch"
+        
+        # Switch is in Eden by default
+        emu = self.emulators.get_emulator_for_platform("switch")
+        assert emu is not None
+        assert emu["id"] == "eden"
+
+    def test_get_emulator_for_unknown_platform(self):
+        """Should return None for unsupported slugs."""
+        emu = self.emulators.get_emulator_for_platform("unknown_console")
+        assert emu is None
+
+    def test_user_defined_survives_cycle(self):
+        """Custom emulators should persist after save/load."""
+        custom_emu = {
+            "id": "custom_id",
+            "name": "Custom Emu",
+            "executable_path": "C:/path.exe",
+            "platform_slugs": ["custom_platform"],
+            "user_defined": True
+        }
+        all_emus = self.emulators.load_emulators()
+        all_emus.append(custom_emu)
+        self.emulators.save_emulators(all_emus)
+        
+        # Reload
+        reloaded = self.emulators.load_emulators()
+        found = next((e for e in reloaded if e["id"] == "custom_id"), None)
+        assert found is not None
+        assert found["name"] == "Custom Emu"
+        assert found["user_defined"] is True
+
+    def test_yuzu_is_not_present(self):
+        """Yuzu should be completely removed from defaults."""
+        emus = self.emulators.DEFAULT_EMULATORS
+        for emu in emus:
+            assert "yuzu" not in emu["id"].lower()
+            assert "yuzu" not in emu["name"].lower()
+
+
 # ── Live Connection ───────────────────────────────────────────────────────
 
 class TestLiveConnection(unittest.TestCase):

@@ -326,11 +326,18 @@ class SettingsDialog(QDialog):
         
         self.settings_layout.addWidget(QLabel("<b>Preferred Switch Emulator:</b>"))
         self.switch_pref = QComboBox()
-        self.switch_pref.addItems(["Switch (Eden)", "Switch (Yuzu)"])
-        prefs = self.config.get("preferred_emulators", {})
-        current = prefs.get("switch", "Switch (Eden)")
-        self.switch_pref.setCurrentText(current)
-        self.switch_pref.currentTextChanged.connect(self.set_switch_pref)
+        
+        # Populate Switch options from the new emulators module
+        all_emus = emulators.load_emulators()
+        switch_emus = [e for e in all_emus if "switch" in e.get("platform_slugs", [])]
+        for e in switch_emus:
+            self.switch_pref.addItem(e["name"], e["id"])
+            
+        current_switch_id = self.config.get("preferred_emulators", {}).get("switch")
+        index = self.switch_pref.findData(current_switch_id)
+        if index >= 0:
+            self.switch_pref.setCurrentIndex(index)
+        self.switch_pref.currentIndexChanged.connect(self.set_switch_pref)
         self.settings_layout.addWidget(self.switch_pref)
         
         self.settings_layout.addSpacing(10)
@@ -936,39 +943,35 @@ class GameDetailDialog(QDialog):
 
         emu_data = None
         emu_display_name = None
-        preferred = self.config.get("preferred_emulators", {}).get(platform)
         
-        # Pass 1: Exact Match (Preferred or Slug)
-        if preferred:
-            data = self.config.get("emulators").get(preferred)
-            if data and data.get("path") and os.path.exists(data.get("path")):
-                emu_data = data
-                emu_display_name = preferred
+        # 1. Check for preferred emulator by ID (new system)
+        preferred_id = self.config.get("preferred_emulators", {}).get(platform)
+        all_emus = emulators.load_emulators()
         
+        if preferred_id:
+            emu_data = next((e for e in all_emus if e["id"] == preferred_id), None)
+            if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
+                emu_display_name = emu_data["name"]
+            else:
+                emu_data = None # Invalid or missing exe
+
+        # 2. Fallback: find first emulator that supports this platform
         if not emu_data:
-            for name, data in self.config.get("emulators").items():
-                if platform_matches(platform, data):
-                    if data.get("path") and os.path.exists(data.get("path")):
-                        emu_data = data
-                        emu_display_name = name
-                        break
-                # Special case for Dolphin (historical naming)
-                if platform_matches(platform, data) and name == "GameCube / Wii":
-                    if data.get("path") and os.path.exists(data.get("path")):
-                        emu_data = data
-                        emu_display_name = name
-                        break
-        
-        # Pass 2: RetroArch Fallback
+            emu_data = emulators.get_emulator_for_platform(platform)
+            if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
+                emu_display_name = emu_data["name"]
+            else:
+                emu_data = None
+
+        # 3. Last Fallback: RetroArch
         if not emu_data:
-            for name, data in self.config.get("emulators").items():
-                if platform_matches("multi", data):
-                    if data.get("path") and os.path.exists(data.get("path")):
-                        emu_data = data
-                        emu_display_name = name
-                        if platform in RETROARCH_PLATFORMS:
-                            self.main_window.log(f"🎮 No dedicated emulator for {platform}, falling back to RetroArch")
-                        break
+            emu_data = next((e for e in all_emus if e["id"] == "retroarch"), None)
+            if emu_data and emu_data.get("executable_path") and os.path.exists(emu_data["executable_path"]):
+                emu_display_name = emu_data["name"]
+                if platform in RETROARCH_PLATFORMS:
+                    self.main_window.log(f"🎮 No dedicated emulator for {platform}, falling back to RetroArch")
+            else:
+                emu_data = None
         
         if not emu_data:
             QMessageBox.warning(self, "Emulator Not Set", 
@@ -982,24 +985,25 @@ class GameDetailDialog(QDialog):
         try:
             # Build launch arguments
             args = []
-            is_retroarch = emu_display_name and "RetroArch" in emu_display_name
+            is_retroarch = emu_data["id"] == "retroarch"
+            emu_path = emu_data["executable_path"]
             
             if is_retroarch:
                 # Once-per-session auto-save prompt
-                check_retroarch_autosave(emu_data["path"], platform, self, self.config)
+                check_retroarch_autosave(emu_path, platform, self, self.config)
 
                 core_name = RETROARCH_CORES.get(platform)
 
                 # PSP asset check
                 if platform == "psp" or core_name == "ppsspp_libretro.dll":
-                    check_ppsspp_assets(emu_data["path"], self)
+                    check_ppsspp_assets(emu_path, self)
 
                 if core_name:
                     # Look for the core relative to the RetroArch exe location
-                    emu_dir_path = Path(emu_data['path']).parent
+                    emu_dir_path = Path(emu_path).parent
                     core_path = emu_dir_path / "cores" / core_name
                     if core_path.exists():
-                        args = [emu_data['path'], "-L", str(core_path), str(local_rom)]
+                        args = [emu_path, "-L", str(core_path), str(local_rom)]
                         self.main_window.log(f"🎮 Using core: {core_name}")
                     else:
                         # Core missing — offer to download
@@ -1014,13 +1018,17 @@ class GameDetailDialog(QDialog):
                         return
                 else:
                     # No known core for this platform — launch without -L and let RetroArch show its menu
-                    args = [emu_data['path'], str(local_rom)]
+                    args = [emu_path, str(local_rom)]
                     self.main_window.log(f"⚠️ No known RetroArch core for {platform}, launching without core")
             else:
-                if "Cemu" in emu_display_name:
-                    args = [emu_data['path'], "-g", str(local_rom)]
-                else:
-                    args = [emu_data['path'], str(local_rom)]
+                # Use custom launch args from schema
+                raw_args = emu_data.get("launch_args", ["{rom_path}"])
+                args = [emu_path]
+                for arg in raw_args:
+                    # Only append if it's not the executable itself (first item handled above)
+                    processed = arg.replace("{rom_path}", str(local_rom))
+                    if processed != emu_path:
+                        args.append(processed)
 
             # Pre-launch sync
             watcher = self.main_window.watcher
@@ -1028,10 +1036,10 @@ class GameDetailDialog(QDialog):
             title = self.game['name']
             
             if is_retroarch:
-                save_info = watcher.get_retroarch_save_path(self.game, {"path": emu_data['path']})
+                save_info = watcher.get_retroarch_save_path(self.game, {"path": emu_path})
             else:
-                full_cmd = f"\"{emu_data['path']}\" \"{local_rom}\""
-                res = watcher.resolve_save_path(emu_display_name, title, full_cmd, emu_data['path'], platform)
+                full_cmd = f"\"{emu_path}\" \"{local_rom}\""
+                res = watcher.resolve_save_path(emu_display_name, title, full_cmd, emu_path, platform)
                 save_info = res[0] if res else None
 
             if self.main_window.config.get("auto_pull_saves", True):
@@ -1059,13 +1067,13 @@ class GameDetailDialog(QDialog):
                         try: dll_path.rename(dll_path.with_suffix('.dll.bak'))
                         except Exception: pass
 
-            emu_dir_cwd = str(Path(emu_data['path']).parent)
+            emu_dir_cwd = str(Path(emu_path).parent)
             proc = subprocess.Popen(args, env=clean_env, cwd=emu_dir_cwd)
             self.main_window.log(f"🚀 Launched {emu_display_name} (PID: {proc.pid})")
             
             if self.main_window.watcher:
                 QTimer.singleShot(0, lambda: self.main_window.watcher.track_session(
-                    proc, emu_display_name, self.game, str(local_rom), emu_data['path'], skip_pull=True
+                    proc, emu_display_name, self.game, str(local_rom), emu_path, skip_pull=True
                 ))
             
             self.accept()

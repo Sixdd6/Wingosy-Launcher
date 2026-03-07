@@ -11,7 +11,7 @@ import traceback
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from src.utils import calculate_folder_hash, calculate_file_hash, calculate_zip_content_hash, zip_path
-from src.platforms import RETROARCH_PLATFORMS, platform_matches
+from src import emulators
 
 class WingosyWatcher(QThread):
     log_signal = Signal(str)
@@ -430,8 +430,12 @@ class WingosyWatcher(QThread):
         try:
             emu_dir = Path(emu_path).parent
             
+            # Use new emulators module to check if this is a known ID
+            all_emus = emulators.load_emulators()
+            this_emu = next((e for e in all_emus if e["name"] == emu_display_name or e["id"] == emu_display_name), None)
+            
             # 1. NINTENDO SWITCH
-            if "Switch" in emu_display_name or platform == "switch":
+            if (this_emu and this_emu["id"] == "eden") or "Switch" in emu_display_name or platform == "switch":
                 import sqlite3
                 title_id = None
                 rom_path = None
@@ -520,9 +524,7 @@ class WingosyWatcher(QThread):
                 return None
 
             # 2. GAMECUBE / WII / NGC (DOLPHIN)
-            elif "Dolphin" in emu_display_name or platform in [
-                    "gc", "ngc", "wii", "gamecube", "nintendo-gamecube",
-                    "nintendo-wii", "wii-u-vc"]:
+            elif (this_emu and this_emu["id"] == "dolphin") or "Dolphin" in emu_display_name or platform in ["gc", "ngc", "wii", "gamecube", "nintendo-gamecube", "nintendo-wii", "wii-u-vc"]:
 
                 emu_dir = Path(emu_path).parent
 
@@ -549,14 +551,14 @@ class WingosyWatcher(QThread):
                 return str(card_dir), "gc_card"
 
             # 3. PLAYSTATION 2
-            elif "PlayStation 2" in emu_display_name or platform == "ps2":
+            elif (this_emu and this_emu["id"] == "pcsx2") or "PlayStation 2" in emu_display_name or platform == "ps2":
                 search_paths = [emu_dir / "memcards" / "Mcd001.ps2", Path(os.path.expandvars(r'%APPDATA%\PCSX2\memcards\Mcd001.ps2')), Path.home() / "Documents" / "PCSX2" / "memcards" / "Mcd001.ps2"]
                 for p in search_paths:
                     if p.exists(): return str(p), False
                 return str(search_paths[0]), False
 
             # 3.5 PLAYSTATION 3 (RPCS3)
-            elif "PlayStation 3" in emu_display_name or platform == "ps3":
+            elif (this_emu and this_emu["id"] == "rpcs3") or "PlayStation 3" in emu_display_name or platform == "ps3":
                 save_base = emu_dir / "dev_hdd0/home/00000001/savedata"
                 if not save_base.exists():
                     save_base = Path(os.path.expandvars(r'%APPDATA%\RPCS3\dev_hdd0\home\00000001\savedata'))
@@ -569,7 +571,7 @@ class WingosyWatcher(QThread):
                 return str(save_base), True
 
             # 5. WII U (CEMU)
-            elif "Cemu" in emu_display_name or platform == "wiiu":
+            elif (this_emu and this_emu["id"] == "cemu") or "Cemu" in emu_display_name or platform == "wiiu":
                 mlc_path = emu_dir / "mlc01"
                 if not mlc_path.exists():
                     settings_xml = emu_dir / "settings.xml"
@@ -592,7 +594,7 @@ class WingosyWatcher(QThread):
                 return None
 
             # 6. NINTENDO 3DS (CITRA)
-            elif any(x in emu_display_name for x in ["Citra", "Azahar", "3DS"]) or platform in ["3ds", "n3ds"]:
+            elif (this_emu and this_emu["id"] == "azahar") or any(x in emu_display_name for x in ["Citra", "Azahar", "3DS"]) or platform in ["3ds", "n3ds"]:
                 citra_base = Path(os.path.expandvars(r'%APPDATA%\Citra\sdmc\Nintendo 3DS'))
                 if citra_base.exists():
                     best, max_mt = None, 0
@@ -608,7 +610,7 @@ class WingosyWatcher(QThread):
                 return str(Path(os.path.expandvars(r'%APPDATA%\Citra\sdmc'))), True
 
             # 4. RETROARCH
-            elif "RetroArch" in emu_display_name or platform == "multi" or platform in RETROARCH_PLATFORMS:
+            elif (this_emu and this_emu["id"] == "retroarch") or "RetroArch" in emu_display_name or platform == "multi" or platform in ["nes", "snes", "n64", "gb", "gbc", "gba", "genesis", "mastersystem", "segacd", "gamegear", "atari2600", "psx", "psp"]:
                 game_item = next((g for g in self.client.user_games if g['name'] == title), None)
                 if not game_item: game_item = {"id": title, "name": title, "platform_slug": platform, "fs_name": title + ".rom"}
                 
@@ -635,7 +637,7 @@ class WingosyWatcher(QThread):
         """
         try:
             from src.platforms import RETROARCH_CORES, RETROARCH_CORE_SAVE_FOLDERS
-            ra_exe = emu_data.get("path", "")
+            ra_exe = emu_data.get("path") or emu_data.get("executable_path", "")
             if not ra_exe:
                 return None
 

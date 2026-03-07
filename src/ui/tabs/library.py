@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap, QImage
 from src.ui.threads import ImageFetcher
 from src.ui.widgets import format_speed, elide_text
 from src.platforms import RETROARCH_PLATFORMS, platform_matches
+from src import emulators
 
 class GameCard(QWidget):
     clicked = Signal(object)
@@ -293,12 +294,9 @@ class LibraryTab(QWidget):
 
         # Build filtered game list
         if platform == "⚠️ No Emulator":
-            from src.platforms import RETROARCH_PLATFORMS
             all_known = set(RETROARCH_PLATFORMS)
-            for emu in self.main_window.config.get("emulators", 
-                                                    {}).values():
-                all_known.update(emu.get("platform_slugs",
-                                 [emu.get("platform_slug", "")]))
+            for emu in emulators.load_emulators():
+                all_known.update(emu.get("platform_slugs", []))
             filtered = [
                 g for g in self.main_window.all_games
                 if g.get("platform_slug") not in all_known
