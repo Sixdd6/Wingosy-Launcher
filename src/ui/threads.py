@@ -24,7 +24,8 @@ class ImageFetcher(QThread):
         self.url = url
     def run(self):
         try:
-            r = requests.get(self.url, timeout=15)
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            r = requests.get(self.url, timeout=15, verify=verify)
             if r.status_code == 200:
                 img = QImage()
                 if img.loadFromData(r.content):
@@ -44,7 +45,8 @@ class BaseDownloader(QThread):
             name = url.split('/')[-1].split('?')[0]
             target_path = os.path.join(target_dir, name)
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-            r = requests.get(url, stream=True, timeout=30, headers=headers)
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            r = requests.get(url, stream=True, timeout=30, headers=headers, verify=verify)
             r.raise_for_status()
             
             total = int(r.headers.get('content-length', 0))
@@ -118,7 +120,8 @@ class DolphinDownloader(BaseDownloader):
         try:
             api_url = "https://dolphin-emu.org/download/list/master/1/?format=json"
             headers = {'User-Agent': 'Mozilla/5.0'}
-            resp = requests.get(api_url, timeout=15, headers=headers)
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            resp = requests.get(api_url, timeout=15, headers=headers, verify=verify)
             if resp.status_code != 200:
                 download_url = "https://dl.dolphin-emu.org/releases/2512/dolphin-2512-x64.7z"
             else:
@@ -144,7 +147,8 @@ class GithubDownloader(BaseDownloader):
         try:
             api_url = f"https://api.github.com/repos/{self.repo}/releases/latest"
             headers = {'User-Agent': 'WingosyLauncher'}
-            resp_obj = requests.get(api_url, timeout=15, headers=headers)
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            resp_obj = requests.get(api_url, timeout=15, headers=headers, verify=verify)
             if resp_obj.status_code != 200:
                 self.finished.emit(False, f"Repo {self.repo} not found.")
                 return
@@ -240,7 +244,8 @@ class UpdaterThread(QThread):
         try:
             api_url = "https://api.github.com/repos/abduznik/Wingosy-Launcher/releases/latest"
             headers = {'User-Agent': 'Mozilla/5.0'}
-            resp = requests.get(api_url, headers=headers, timeout=10).json()
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            resp = requests.get(api_url, headers=headers, timeout=10, verify=verify).json()
             latest_version = resp.get("tag_name", "").replace("v", "")
             if latest_version and latest_version != self.current_version:
                 download_url = ""
@@ -266,7 +271,8 @@ class SelfUpdateThread(QThread):
     def run(self):
         temp_exe = self.current_exe_path.parent / "Wingosy_update.exe"
         try:
-            r = requests.get(self.download_url, stream=True, timeout=60)
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            r = requests.get(self.download_url, stream=True, timeout=60, verify=verify)
             r.raise_for_status()
             total = int(r.headers.get('content-length', 0))
             downloaded = 0
@@ -319,7 +325,8 @@ class CoreDownloadThread(QThread):
             os.makedirs(self.cores_dir, exist_ok=True)
             url = f"{RETROARCH_BUILDBOT}{self.core_name}.zip"
             
-            r = requests.get(url, stream=True, timeout=30)
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+            r = requests.get(url, stream=True, timeout=30, verify=verify)
             r.raise_for_status()
             
             total = int(r.headers.get('content-length', 0))

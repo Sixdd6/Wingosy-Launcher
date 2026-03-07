@@ -161,9 +161,10 @@ class WingosyMainWindow(QMainWindow):
             cached = self.config.get("cached_library", [])
             if cached:
                 self.all_games = cached
-                self.library_tab.populate_grid(cached)
-                # Ensure platform filter is updated for cached games
+                # Ensure platform filter is updated for cached games (saves/restores current)
                 self._update_platform_filter(cached)
+                # Respect current filters instead of showing all
+                self.library_tab.apply_filters()
                 self.log(f"📦 Loaded {len(cached)} games from cache.")
             else:
                 self.log("🔄 Loading library...")
@@ -180,20 +181,22 @@ class WingosyMainWindow(QMainWindow):
         self._fetch_thread.error.connect(lambda: self.library_tab.show_connection_failed_banner())
         self._fetch_thread.start()
 
-        # 5 second timeout
+        # 8 second timeout
         self._connect_timeout = QTimer()
         self._connect_timeout.setSingleShot(True)
-        self._connect_timeout.setInterval(5000)
+        self._connect_timeout.setInterval(8000)
         self._connect_timeout.timeout.connect(self._on_connect_timeout)
         self._connect_timeout.start()
 
     def _on_connect_timeout(self):
-        # Only fire if worker hasn't completed yet
-        if not self._library_fetch_done:
+        # Only fire if worker hasn't completed yet and no games loaded (even from cache)
+        if not self._library_fetch_done and not self.all_games:
             self.library_tab.show_connection_failed_banner()
 
     def _on_library_fetched(self, res):
         self._library_fetch_done = True
+        if hasattr(self, '_connect_timeout'):
+            self._connect_timeout.stop()
         self.library_tab.hide_banner()
         self.library_tab.refresh_btn.setEnabled(True)
         
@@ -253,7 +256,12 @@ class WingosyMainWindow(QMainWindow):
         if is_new_data:
             self._update_platform_filter(games)
         
-        self.library_tab.populate_grid(games)
+        # Force a visual rebuild to update indicators (local exists, etc)
+        if hasattr(self.library_tab, '_current_platform'):
+            delattr(self.library_tab, '_current_platform')
+        
+        # Respect current filters instead of showing all
+        self.library_tab.apply_filters()
 
     def _show_empty_library_message(self, message):
         self.library_tab.show_empty_message(message)
@@ -533,12 +541,21 @@ class WingosyMainWindow(QMainWindow):
         self.tray_icon.show()
 
     def closeEvent(self, event):
+        # Stop watcher thread gracefully
+        if hasattr(self, 'watcher') and self.watcher:
+            self.watcher.running = False
+            self.watcher.quit()
+            self.watcher.wait(3000)  # wait up to 3 seconds
+        
+        # Stop library fetch worker if running
         if hasattr(self, '_fetch_thread') and self._fetch_thread.isRunning():
             self._fetch_thread.quit()
-            self._fetch_thread.wait()
+            self._fetch_thread.wait(2000)
         
         settings = QSettings("Wingosy", "WingosyLauncher")
         settings.setValue("geometry", self.saveGeometry())
         if self.tray_icon.isVisible():
             self.hide()
             event.ignore()
+        else:
+            event.accept()

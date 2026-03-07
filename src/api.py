@@ -1,9 +1,27 @@
 import os
 import time
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
 import requests
+
+def _get_certifi_path():
+    """Get certifi CA bundle path, handling PyInstaller."""
+    # Check env var first (set by main.py before imports)
+    env_path = os.environ.get('REQUESTS_CA_BUNDLE')
+    if env_path and os.path.exists(env_path):
+        return env_path
+    try:
+        import certifi
+        path = certifi.where()
+        os.environ['REQUESTS_CA_BUNDLE'] = path
+        os.environ['SSL_CERT_FILE'] = path
+        return path
+    except Exception:
+        return True  # Let requests find it automatically
+
+CERTIFI_PATH = _get_certifi_path()
 
 class RomMClient:
     def __init__(self, host, config=None):
@@ -48,7 +66,7 @@ class RomMClient:
             # Try heartbeat first, then root api
             for endpoint in ["/api/heartbeat", "/api"]:
                 try:
-                    r = requests.get(f"{self.host}{endpoint}", timeout=5)
+                    r = requests.get(f"{self.host}{endpoint}", timeout=5, verify=CERTIFI_PATH)
                     if r.status_code == 200:
                         return True, "Successfully connected to RomM."
                 except (requests.exceptions.ConnectTimeout,
@@ -75,7 +93,7 @@ class RomMClient:
                 "scope": scope
             }
             try:
-                r = requests.post(url, data=data, headers=self.headers, timeout=10)
+                r = requests.post(url, data=data, headers=self.headers, timeout=10, verify=CERTIFI_PATH)
             except (requests.exceptions.ConnectTimeout,
                     requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
@@ -107,7 +125,7 @@ class RomMClient:
             params = {"limit": limit, "offset": offset}
             try:
                 r = requests.get(url, headers=self.get_auth_headers(),
-                                params=params, timeout=30)
+                                params=params, timeout=30, verify=CERTIFI_PATH)
             except (requests.exceptions.ConnectTimeout,
                     requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
@@ -167,11 +185,11 @@ class RomMClient:
             url = f"{self.host}/api/roms/{rom_id}/content/{encoded_name}"
             
             try:
-                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
+                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60, verify=CERTIFI_PATH)
                 if r.status_code == 404:
                     # Fallback to /download path ONLY if 404
                     url = f"{self.host}/api/roms/{rom_id}/download"
-                    r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
+                    r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60, verify=CERTIFI_PATH)
             except (requests.exceptions.ConnectTimeout,
                     requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
@@ -209,7 +227,8 @@ class RomMClient:
                 f"{self.host}/api/saves",
                 params={"rom_id": rom_id},
                 headers=self.get_auth_headers(),
-                timeout=10
+                timeout=10,
+                verify=CERTIFI_PATH
             )
             if r.status_code != 200:
                 return None
@@ -231,7 +250,8 @@ class RomMClient:
                 f"{self.host}/api/states",
                 params={"rom_id": rom_id},
                 headers=self.get_auth_headers(),
-                timeout=10
+                timeout=10,
+                verify=CERTIFI_PATH
             )
             if r.status_code != 200:
                 return None
@@ -252,7 +272,7 @@ class RomMClient:
             path = save_item.get('download_path') or save_item.get('path')
             url = path if path.startswith('http') else f"{self.host}{path}"
             try:
-                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=30)
+                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=30, verify=CERTIFI_PATH)
             except (requests.exceptions.ConnectTimeout,
                     requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
@@ -283,7 +303,7 @@ class RomMClient:
             url = dl_path if dl_path.startswith('http') \
                   else f"{self.host}{dl_path}"
             r = requests.get(url, headers=self.get_auth_headers(),
-                           stream=True, timeout=60)
+                           stream=True, timeout=60, verify=CERTIFI_PATH)
             with open(dest_path, 'wb') as f:
                 for chunk in r.iter_content(65536):
                     if chunk: f.write(chunk)
@@ -301,7 +321,7 @@ class RomMClient:
             with open(file_path, 'rb') as f:
                 files = {'saveFile': (filename, f, 'application/octet-stream')}
                 try:
-                    r = requests.post(url, params=params, headers=self.get_auth_headers(), files=files, timeout=60)
+                    r = requests.post(url, params=params, headers=self.get_auth_headers(), files=files, timeout=60, verify=CERTIFI_PATH)
                 except (requests.exceptions.ConnectTimeout,
                         requests.exceptions.ConnectionError,
                         requests.exceptions.Timeout,
@@ -343,7 +363,8 @@ class RomMClient:
                     params=params,
                     headers=self.get_auth_headers(),
                     files=files,
-                    timeout=60
+                    timeout=60,
+                    verify=CERTIFI_PATH
                 )
                 print(f"[API] upload_state -> {r.status_code}: "
                       f"{r.text[:300]}")
@@ -356,7 +377,7 @@ class RomMClient:
         try:
             url = f"{self.host}/api/platforms"
             try:
-                r = requests.get(url, headers=self.get_auth_headers(), timeout=15)
+                r = requests.get(url, headers=self.get_auth_headers(), timeout=15, verify=CERTIFI_PATH)
             except (requests.exceptions.ConnectTimeout,
                     requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,
@@ -390,7 +411,7 @@ class RomMClient:
 
             url = path if path.startswith('http') else f"{self.host}{path}"
             try:
-                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
+                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60, verify=CERTIFI_PATH)
             except (requests.exceptions.ConnectTimeout,
                     requests.exceptions.ConnectionError,
                     requests.exceptions.Timeout,

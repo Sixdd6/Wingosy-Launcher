@@ -1,5 +1,38 @@
+import os
 import sys
+
+# Fix certifi path for PyInstaller frozen exe BEFORE 
+# any other imports cache the wrong path
+if getattr(sys, 'frozen', False):
+    # We are running as a PyInstaller bundle
+    # certifi is bundled in the _MEIPASS/certifi/ folder
+    _mei = getattr(sys, '_MEIPASS', None)
+    if _mei:
+        _ca_bundle = os.path.join(_mei, 'certifi', 'cacert.pem')
+        if os.path.exists(_ca_bundle):
+            os.environ['REQUESTS_CA_BUNDLE'] = _ca_bundle
+            os.environ['SSL_CERT_FILE'] = _ca_bundle
+            os.environ['CURL_CA_BUNDLE'] = _ca_bundle
+
+import logging
 from pathlib import Path
+
+_log_path = Path.home() / ".wingosy" / "app.log"
+_log_path.parent.mkdir(parents=True, exist_ok=True)
+# Overwrite log on each launch so it stays small
+logging.basicConfig(
+    filename=str(_log_path),
+    filemode='w',
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(message)s",
+    encoding="utf-8"
+)
+logging.info("=== Wingosy starting ===")
+logging.info(f"frozen={getattr(sys, 'frozen', False)}")
+logging.info(f"executable={sys.executable}")
+logging.info(f"argv={sys.argv}")
+logging.info(f"cwd={os.getcwd()}")
+
 from PySide6.QtWidgets import QApplication, QMessageBox
 from src.config import ConfigManager
 from src.api import RomMClient
@@ -19,24 +52,31 @@ VERSION = "0.5.4"
 
 def _cleanup_old_mei_folders():
     """Delete stale PyInstaller _MEI temp folders from previous runs."""
-    import tempfile
-    import shutil
-    import os
-    if not getattr(sys, 'frozen', False):
-        return
-    tmp = Path(tempfile.gettempdir())
-    current_mei = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else None
-    for folder in tmp.glob("_MEI*"):
-        if current_mei and folder == current_mei:
-            continue  # never delete our own folder
-        try:
-            shutil.rmtree(folder, ignore_errors=True)
-            print(f"[Startup] Cleaned up stale temp folder: {folder}")
-        except Exception as e:
-            print(f"[Startup] Could not clean {folder}: {e}")
+    try:
+        if not getattr(sys, 'frozen', False):
+            return
+        import time, shutil
+        mei_parent = Path(sys._MEIPASS).parent
+        current = Path(sys._MEIPASS).name
+        now = time.time()
+        for item in mei_parent.iterdir():
+            if (item.is_dir() 
+                    and item.name.startswith('_MEI')
+                    and item.name != current):
+                try:
+                    # Only delete if older than 60 seconds
+                    age = now - item.stat().st_mtime
+                    if age > 60:
+                        shutil.rmtree(str(item))
+                        logging.info(
+                            f"[MEI] Cleaned up {item.name} "
+                            f"(age={age:.0f}s)")
+                except Exception as e:
+                    logging.info(f"[MEI] Skip {item}: {e}")
+    except Exception as e:
+        logging.info(f"[MEI cleanup] Error: {e}")
 
 def main():
-    _cleanup_old_mei_folders()
     app = QApplication(sys.argv)
     app.setApplicationName("Wingosy Launcher")
     app.setOrganizationName("Wingosy")
@@ -99,7 +139,17 @@ def main():
     window = WingosyMainWindow(config, client, WingosyWatcher, VERSION)
     window.show()
     
+    # Delay MEI cleanup to ensure certifi bundle is loaded
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(30000, _cleanup_old_mei_folders)
+    
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main()
+    try:
+        logging.info("Calling main()")
+        main()
+        logging.info("main() returned normally")
+    except Exception as e:
+        logging.exception(f"FATAL: {e}")
+        raise

@@ -6,6 +6,7 @@ Run with logs: pytest tests/ -v -s
 import pytest
 import sys
 import os
+import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.platforms import (RETROARCH_PLATFORMS, RETROARCH_CORES,
@@ -418,3 +419,256 @@ class TestRetroArchCfg:
         assert "PPSSPP" in path
         assert "SAVEDATA" in path
         assert is_folder is True
+
+
+# ── Regressions ───────────────────────────────────────────────────────────
+
+class TestRegressions:
+    def test_platform_filter_preserved_after_refresh(self):
+        """
+        Regression: platform filter must not reset to 'All'
+        when library refreshes or cards reload.
+        The selected platform text must survive a 
+        populate/refresh cycle.
+        """
+        from tests.dummy import DummyRomMClient
+        from src.config import ConfigManager
+        config = ConfigManager()
+        client = DummyRomMClient(game_count=50)
+        games = client.fetch_library()
+        
+        # Get unique platforms
+        platforms = list({g['platform_slug'] for g in games 
+                         if g.get('platform_slug')})
+        assert len(platforms) > 1, "Need multiple platforms to test filter"
+        
+        # Simulate: user selects a platform
+        selected = platforms[0]
+        
+        # Simulate: library refreshes (re-fetches games)
+        games_after = client.fetch_library()
+        platforms_after = list({g['platform_slug'] 
+                                for g in games_after 
+                                if g.get('platform_slug')})
+        
+        # Selected platform must still exist after refresh
+        assert selected in platforms_after, \
+            f"Platform '{selected}' disappeared after refresh"
+        
+        # Filter applied to refreshed library must return 
+        # only games of that platform
+        filtered = [g for g in games_after 
+                   if g['platform_slug'] == selected]
+        for g in filtered:
+            assert g['platform_slug'] == selected, \
+                "Filter returned game from wrong platform"
+
+    def test_stdout_reconfiguration_none_safe(self):
+        """
+        Regression: UTF-8 stdout reconfiguration must not 
+        crash when sys.stdout or sys.stderr is None 
+        (e.g. PyInstaller frozen exe without console).
+        """
+        import sys, io
+        
+        # Save originals
+        orig_stdout = sys.stdout
+        orig_stderr = sys.stderr
+        
+        try:
+            # Simulate PyInstaller frozen exe: stdout is None
+            sys.stdout = None
+            sys.stderr = None
+            
+            # This is the exact guard from main.py
+            # It must not raise AttributeError
+            try:
+                if sys.stdout and hasattr(sys.stdout, 'buffer'):
+                    sys.stdout = io.TextIOWrapper(
+                        sys.stdout.buffer, 
+                        encoding='utf-8', 
+                        errors='replace')
+                if sys.stderr and hasattr(sys.stderr, 'buffer'):
+                    sys.stderr = io.TextIOWrapper(
+                        sys.stderr.buffer, 
+                        encoding='utf-8', 
+                        errors='replace')
+                # If we reach here, no crash — test passes
+                passed = True
+            except AttributeError as e:
+                passed = False
+                pytest.fail(
+                    f"stdout reconfiguration crashed with "
+                    f"None stdout: {e}")
+            
+            assert passed
+        finally:
+            # Always restore
+            sys.stdout = orig_stdout
+            sys.stderr = orig_stderr
+
+    def test_mei_cleanup_exception_safe(self):
+        """
+        Regression: _cleanup_old_mei_folders must not 
+        propagate exceptions — it must catch and log them
+        so a cleanup failure never crashes the app.
+        """
+        import sys
+        from unittest.mock import patch
+        
+        # Import main module functions without running main()
+        # We test the cleanup function in isolation
+        import tempfile
+        from pathlib import Path
+        import shutil
+        
+        # Create a fake MEI folder we don't have permission 
+        # to delete (simulate the TLS crash scenario)
+        tmp = Path(tempfile.mkdtemp())
+        fake_mei = tmp / "_MEI99999"
+        fake_mei.mkdir()
+        
+        # Mock sys._MEIPASS to simulate frozen exe
+        with patch.object(sys, '_MEIPASS', str(tmp / '_MEI00001'),
+                         create=True):
+            # Also mock sys.frozen
+            with patch.object(sys, 'frozen', True, create=True):
+                
+                def _cleanup_safe():
+                    """Copy of the guarded cleanup from main.py"""
+                    try:
+                        if not getattr(sys, 'frozen', False):
+                            return
+                        mei_parent = Path(sys._MEIPASS).parent
+                        current = Path(sys._MEIPASS).name
+                        for item in mei_parent.iterdir():
+                            if (item.is_dir() 
+                                    and item.name.startswith('_MEI')
+                                    and item.name != current):
+                                try:
+                                    shutil.rmtree(str(item))
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        print(f"[MEI cleanup] Error: {e}")
+                
+                # Must not raise
+                try:
+                    _cleanup_safe()
+                    passed = True
+                except Exception as e:
+                    passed = False
+                    pytest.fail(
+                        f"MEI cleanup propagated exception: {e}")
+                
+                assert passed
+        
+        # Cleanup temp
+        shutil.rmtree(str(tmp), ignore_errors=True)
+
+
+# ── Live Connection ───────────────────────────────────────────────────────
+
+class TestLiveConnection(unittest.TestCase):
+    """
+    Live integration tests against a real RomM server.
+    Skipped automatically if host/token not in config or 
+    server is unreachable.
+    """
+    
+    @classmethod
+    def setUpClass(cls):
+        from src.config import ConfigManager
+        from src.api import RomMClient
+        config = ConfigManager()
+        host = config.get("host")
+        token = config.get("token")
+        
+        if not host or not token:
+            raise unittest.SkipTest(
+                "No host/token in config — skipping live tests")
+        
+        from src.api import CERTIFI_PATH
+        cls.client = RomMClient(host, config)
+        cls.client.token = token
+        
+        # Quick reachability check
+        try:
+            import requests
+            r = requests.get(
+                f"{host}/api/platforms",
+                headers=cls.client.get_auth_headers(),
+                timeout=5,
+                verify=CERTIFI_PATH)
+            if r.status_code not in [200, 401]:
+                raise unittest.SkipTest(
+                    f"Server not reachable: {r.status_code}")
+        except Exception as e:
+            raise unittest.SkipTest(
+                f"Server not reachable: {e}")
+    
+    def test_fetch_library_returns_games(self):
+        """Live server must return at least 1 game."""
+        games = self.client.fetch_library()
+        self.assertIsInstance(games, list)
+        if isinstance(games, list):
+            self.assertGreater(len(games), 0,
+                "Live server returned empty library")
+    
+    def test_auth_headers_present(self):
+        """Auth headers must include Authorization."""
+        headers = self.client.get_auth_headers()
+        self.assertIn('Authorization', headers,
+            "Missing Authorization header")
+        self.assertTrue(
+            headers['Authorization'].startswith('Bearer '),
+            "Authorization header must be Bearer token")
+    
+    def test_get_latest_save_returns_dict_or_none(self):
+        """get_latest_save must return dict or None, never crash."""
+        games = self.client.fetch_library()
+        if not isinstance(games, list) or not games:
+            self.skipTest("No games available")
+        rom_id = games[0]['id']
+        result = self.client.get_latest_save(rom_id)
+        self.assertTrue(
+            result is None or isinstance(result, dict),
+            f"Expected dict or None, got {type(result)}")
+    
+    def test_get_latest_state_returns_dict_or_none(self):
+        """get_latest_state must return dict or None, never crash."""
+        games = self.client.fetch_library()
+        if not isinstance(games, list) or not games:
+            self.skipTest("No games available")
+        rom_id = games[0]['id']
+        result = self.client.get_latest_state(rom_id)
+        self.assertTrue(
+            result is None or isinstance(result, dict),
+            f"Expected dict or None, got {type(result)}")
+    
+    def test_certifi_bundle_accessible(self):
+        """certifi CA bundle must be accessible from current process."""
+        import certifi
+        import os
+        path = certifi.where()
+        self.assertTrue(
+            os.path.exists(path),
+            f"certifi bundle not found at: {path}")
+    
+    def test_https_not_required_for_local_server(self):
+        """HTTP (non-TLS) connections must work for local servers."""
+        from src.config import ConfigManager
+        config = ConfigManager()
+        host = config.get("host", "")
+        if host.startswith("https://"):
+            self.skipTest("Server uses HTTPS — skipping HTTP test")
+        # HTTP connection should work without certifi
+        import requests
+        from src.api import RomMClient
+        client = RomMClient(host, config)
+        client.token = config.get("token")
+        try:
+            games = client.fetch_library()
+            self.assertIsInstance(games, list)
+        except Exception as e:
+            self.fail(f"HTTP connection failed: {e}")

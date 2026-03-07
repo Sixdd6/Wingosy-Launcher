@@ -5,6 +5,7 @@ import webbrowser
 import zipfile
 import shutil
 import subprocess
+import logging
 from pathlib import Path
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
                              QLabel, QLineEdit, QPushButton, QDialogButtonBox, 
@@ -361,10 +362,12 @@ class SettingsDialog(QDialog):
         # Temporarily override host for test
         import requests
         try:
+            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
             r = requests.get(
                 f"{host.rstrip('/')}/api/roms?limit=1&offset=0",
                 headers=self.main_window.client.get_auth_headers(),
-                timeout=5
+                timeout=5,
+                verify=verify
             )
             success = r.status_code == 200
         except Exception:
@@ -381,52 +384,70 @@ class SettingsDialog(QDialog):
             self.reconnect_btn.setVisible(False)
 
     def _apply_and_restart(self):
+        import logging
+        import time
         new_host = self.host_input.text().strip()
+        logging.info("[Restart] _apply_and_restart called")
+        logging.info(f"[Restart] new host={new_host}")
+        
+        # Save config first
         self.config.set("host", new_host)
+        
+        # Small delay to ensure config is flushed to disk
+        time.sleep(0.3)
+        
         QMessageBox.information(self, "Restarting",
             "Host saved. The app will now restart.")
+        
+        logging.info("[Restart] config saved, calling _do_restart")
         self._do_restart()
 
-    @staticmethod
-    def _do_restart():
-        import sys
+    def _do_restart(self):
+        import logging
         import subprocess
-        import threading
-
-        exe = sys.executable
-        args = sys.argv[:]
-
-        def _launch_after_delay():
-            import time
-            time.sleep(1)
-            try:
-                if getattr(sys, 'frozen', False):
-                    # Running as PyInstaller .exe — spawn completely 
-                    # fresh process, detached from current one
-                    subprocess.Popen(
-                        [exe] + args,
-                        close_fds=True,
-                        creationflags=(
-                            subprocess.DETACHED_PROCESS |
-                            subprocess.CREATE_NEW_PROCESS_GROUP
-                        )
-                    )
-                else:
-                    # Running as plain Python script
-                    subprocess.Popen(
-                        [exe] + args,
-                        close_fds=True
-                    )
-            except Exception as e:
-                print(f"[Restart] Failed to relaunch: {e}")
-
-        t = threading.Thread(target=_launch_after_delay, daemon=True)
-        t.start()
-
-        # Exit current process immediately and cleanly
-        # QApplication.quit() first to flush any pending Qt events
-        from PySide6.QtWidgets import QApplication
-        QApplication.quit()
+        import sys
+        import os
+        
+        logging.info("[Restart] _do_restart called")
+        logging.info(f"[Restart] frozen="
+                     f"{getattr(sys, 'frozen', False)}")
+        logging.info(f"[Restart] sys.executable={sys.executable}")
+        logging.info(f"[Restart] sys.argv={sys.argv}")
+        
+        exe = sys.executable  # Always the correct exe, 
+                               # frozen or not
+        
+        try:
+            logging.info(f"[Restart] about to Popen: {exe}")
+            
+            if sys.platform == "win32":
+                # Windows: detached process so it survives
+                # parent exit
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                subprocess.Popen(
+                    [exe],
+                    close_fds=True,
+                    creationflags=(
+                        DETACHED_PROCESS | 
+                        CREATE_NEW_PROCESS_GROUP),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                subprocess.Popen(
+                    [exe],
+                    close_fds=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            
+            logging.info("[Restart] Popen complete")
+        except Exception as e:
+            logging.exception(f"[Restart] Popen failed: {e}")
+            return
+        
+        logging.info("[Restart] calling sys.exit(0)")
         sys.exit(0)
 
     def show_about(self):
