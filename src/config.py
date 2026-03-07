@@ -11,7 +11,6 @@ class ConfigManager:
         "auto_track": False,
         "first_run": True,
         "auto_pull_saves": True,
-        "cached_library": [],
         "cards_per_row": 6,
         "retroarch_save_mode": "srm",
         "device_id": "wingosy-win-default",

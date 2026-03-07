@@ -51,11 +51,6 @@ class RomMClient:
                     r = requests.get(f"{self.host}{endpoint}", timeout=5)
                     if r.status_code == 200:
                         return True, "Successfully connected to RomM."
-                except (requests.exceptions.ConnectTimeout,
-                        requests.exceptions.ConnectionError,
-                        requests.exceptions.Timeout,
-                        requests.exceptions.RequestException):
-                    continue
                 except: continue
             return False, "Could not reach RomM API."
         except Exception as e:
@@ -74,15 +69,7 @@ class RomMClient:
                 "password": password,
                 "scope": scope
             }
-            try:
-                r = requests.post(url, data=data, headers=self.headers, timeout=10)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in login: {e}")
-                return False, f"Could not reach server: {e}"
-
+            r = requests.post(url, data=data, headers=self.headers, timeout=10)
             if r.status_code == 200:
                 self.token = r.json()["access_token"]
                 return True, self.token
@@ -105,15 +92,8 @@ class RomMClient:
 
         while True:
             params = {"limit": limit, "offset": offset}
-            try:
-                r = requests.get(url, headers=self.get_auth_headers(),
-                                params=params, timeout=30)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in fetch_library: {e}")
-                return []
+            r = requests.get(url, headers=self.get_auth_headers(),
+                            params=params, timeout=30)
 
             if r.status_code == 401:
                 return "REAUTH_REQUIRED"
@@ -142,8 +122,6 @@ class RomMClient:
               f"in {offset // limit + 1} page(s)")
         self.user_games = all_items
         self.save_library_cache(all_items)
-        if self.config:
-            self.config.set("cached_library", all_items)
         return all_items
 
     def get_cover_url(self, game):
@@ -166,18 +144,11 @@ class RomMClient:
             encoded_name = quote(file_name)
             url = f"{self.host}/api/roms/{rom_id}/content/{encoded_name}"
             
-            try:
+            r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
+            if r.status_code == 404:
+                # Fallback to /download path ONLY if 404
+                url = f"{self.host}/api/roms/{rom_id}/download"
                 r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
-                if r.status_code == 404:
-                    # Fallback to /download path ONLY if 404
-                    url = f"{self.host}/api/roms/{rom_id}/download"
-                    r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in download_rom: {e}")
-                return False
 
             if r.status_code != 200:
                 return False
@@ -207,18 +178,11 @@ class RomMClient:
         try:
             # Trying both /api/roms/{id}/saves and /api/saves
             url = f"{self.host}/api/roms/{rom_id}/saves"
-            try:
-                r = requests.get(url, headers=self.get_auth_headers(), timeout=10)
-                
-                if r.status_code != 200:
-                    url = f"{self.host}/api/saves"
-                    r = requests.get(url, headers=self.get_auth_headers(), params={"rom_id": rom_id}, timeout=10)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in get_latest_save: {e}")
-                return None
+            r = requests.get(url, headers=self.get_auth_headers(), timeout=10)
+            
+            if r.status_code != 200:
+                url = f"{self.host}/api/saves"
+                r = requests.get(url, headers=self.get_auth_headers(), params={"rom_id": rom_id}, timeout=10)
 
             if r.status_code == 200:
                 data = r.json()
@@ -239,19 +203,11 @@ class RomMClient:
         """
         try:
             url = f"{self.host}/api/roms/{rom_id}/saves"
-            try:
-                r = requests.get(url, headers=self.get_auth_headers(), timeout=10)
-                if r.status_code != 200:
-                    url = f"{self.host}/api/saves"
-                    r = requests.get(url, headers=self.get_auth_headers(),
-                                    params={"rom_id": rom_id}, timeout=10)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in get_save_by_slot: {e}")
-                return None
-
+            r = requests.get(url, headers=self.get_auth_headers(), timeout=10)
+            if r.status_code != 200:
+                url = f"{self.host}/api/saves"
+                r = requests.get(url, headers=self.get_auth_headers(),
+                                 params={"rom_id": rom_id}, timeout=10)
             if r.status_code == 200:
                 data = r.json()
                 items = data if isinstance(data, list) else data.get("items", [])
@@ -268,15 +224,7 @@ class RomMClient:
         try:
             path = save_item.get('download_path') or save_item.get('path')
             url = path if path.startswith('http') else f"{self.host}{path}"
-            try:
-                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=30)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in download_save: {e}")
-                return False
-
+            r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=30)
             if r.status_code == 200:
                 with open(target_path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
@@ -300,14 +248,7 @@ class RomMClient:
             
             with open(file_path, 'rb') as f:
                 files = {'saveFile': (file_name, f, 'application/octet-stream')}
-                try:
-                    r = requests.post(url, params=params, headers=self.get_auth_headers(), files=files, timeout=60)
-                except (requests.exceptions.ConnectTimeout,
-                        requests.exceptions.ConnectionError,
-                        requests.exceptions.Timeout,
-                        requests.exceptions.RequestException) as e:
-                    print(f"[API] Network error in upload_save: {e}")
-                    return False, str(e)
+                r = requests.post(url, params=params, headers=self.get_auth_headers(), files=files, timeout=60)
                 return r.status_code in [200, 201], r.text
         except Exception as e:
             return False, str(e)
@@ -315,15 +256,7 @@ class RomMClient:
     def get_firmware(self):
         try:
             url = f"{self.host}/api/platforms"
-            try:
-                r = requests.get(url, headers=self.get_auth_headers(), timeout=15)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in get_firmware: {e}")
-                return []
-
+            r = requests.get(url, headers=self.get_auth_headers(), timeout=15)
             if r.status_code == 200:
                 platforms = r.json()
                 firmware_list = []
@@ -349,15 +282,7 @@ class RomMClient:
                 path = f"/api/raw/assets/firmware/{slug}/{name}"
 
             url = path if path.startswith('http') else f"{self.host}{path}"
-            try:
-                r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
-            except (requests.exceptions.ConnectTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.Timeout,
-                    requests.exceptions.RequestException) as e:
-                print(f"[API] Network error in download_firmware: {e}")
-                return False
-
+            r = requests.get(url, headers=self.get_auth_headers(), stream=True, timeout=60)
             total = int(r.headers.get('content-length', 0))
             downloaded = 0
             start = time.time()
