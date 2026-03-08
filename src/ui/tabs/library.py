@@ -14,13 +14,53 @@ from src.ui.widgets import format_speed, elide_text
 from src.platforms import RETROARCH_PLATFORMS, platform_matches
 from src import emulators
 
-# XInput constants for Windows gamepad support
-XINPUT_GAMEPAD_DPAD_UP    = 0x0001
-XINPUT_GAMEPAD_DPAD_DOWN  = 0x0002
-XINPUT_GAMEPAD_DPAD_LEFT  = 0x0004
-XINPUT_GAMEPAD_DPAD_RIGHT = 0x0008
-XINPUT_GAMEPAD_A          = 0x1000
-XINPUT_GAMEPAD_B          = 0x2000
+CONTROLLER_MAPS = {
+    "xinput": {
+        "confirm":  0x1000,  # A button
+        "back":     0x2000,  # B button
+        "up":       0x0001,  # DPAD UP
+        "down":     0x0002,  # DPAD DOWN
+        "left":     0x0004,  # DPAD LEFT
+        "right":    0x0008,  # DPAD RIGHT
+        "stick_deadzone": 8000,
+    },
+    "ps4": {
+        "confirm":  0x1000,  # ✕ (Cross)
+        "back":     0x2000,  # ○ (Circle)
+        "up":       0x0001,
+        "down":     0x0002,
+        "left":     0x0004,
+        "right":    0x0008,
+        "stick_deadzone": 8000,
+    },
+    "ps5": {
+        "confirm":  0x1000,  # ✕ (Cross)
+        "back":     0x2000,  # ○ (Circle)
+        "up":       0x0001,
+        "down":     0x0002,
+        "left":     0x0004,
+        "right":    0x0008,
+        "stick_deadzone": 8000,
+    },
+    "switch": {
+        "confirm":  0x1000,  # A (right)
+        "back":     0x2000,  # B (bottom)
+        "up":       0x0001,
+        "down":     0x0002,
+        "left":     0x0004,
+        "right":    0x0008,
+        "stick_deadzone": 8000,
+    },
+    "generic": {
+        "confirm":  0x1000,
+        "back":     0x2000,
+        "up":       0x0001,
+        "down":     0x0002,
+        "left":     0x0004,
+        "right":    0x0008,
+        "stick_deadzone": 10000,
+    },
+}
 
 class XINPUT_GAMEPAD(ctypes.Structure):
     _fields_ = [
@@ -252,6 +292,7 @@ class LibraryTab(QWidget):
         # Gamepad support via XInput polling
         self._last_buttons = 0
         self._last_axis = [0.0, 0.0]
+        self._controller_lost_count = 0
         self.gamepad_timer = QTimer(self)
         self.gamepad_timer.timeout.connect(self._poll_gamepad)
         if sys.platform == 'win32':
@@ -268,46 +309,69 @@ class LibraryTab(QWidget):
             logging.debug("[Library] Gamepad support currently only available on Windows via XInput")
 
     def _poll_gamepad(self):
+        if not hasattr(self, 'xinput'):
+            return
+
+        controller_type = self.config.get("controller_type", "xinput")
+        mapping = CONTROLLER_MAPS.get(controller_type, CONTROLLER_MAPS["xinput"])
+        
         state = XINPUT_STATE()
         res = self.xinput.XInputGetState(0, ctypes.byref(state))
-        if res != 0: # Controller disconnected
+        
+        if res == 0:
+            # Controller connected
+            self._controller_lost_count = 0
+            if hasattr(self.main_window, 'title_bar'):
+                self.main_window.title_bar.gamepad_indicator.setVisible(True)
+        else:
+            # Controller disconnected
+            self._controller_lost_count += 1
+            if self._controller_lost_count >= 3:
+                if hasattr(self.main_window, 'title_bar'):
+                    self.main_window.title_bar.gamepad_indicator.setVisible(False)
             return
 
         buttons = state.Gamepad.wButtons
+        lx = state.Gamepad.sThumbLX
+        ly = state.Gamepad.sThumbLY
+        dz = mapping["stick_deadzone"]
         
-        # Check for button presses (current frame vs last frame)
+        # Detect new presses only (not holds)
+        prev = getattr(self, '_prev_buttons', 0)
+        prev_lx = getattr(self, '_prev_lx', 0)
+        prev_ly = getattr(self, '_prev_ly', 0)
+        
         def pressed(mask):
-            return (buttons & mask) and not (self._last_buttons & mask)
+            return (buttons & mask) and not (prev & mask)
 
-        if pressed(XINPUT_GAMEPAD_DPAD_LEFT):
-            self._on_nav_key(Qt.Key_Left)
-        elif pressed(XINPUT_GAMEPAD_DPAD_RIGHT):
-            self._on_nav_key(Qt.Key_Right)
-        elif pressed(XINPUT_GAMEPAD_DPAD_UP):
-            self._on_nav_key(Qt.Key_Up)
-        elif pressed(XINPUT_GAMEPAD_DPAD_DOWN):
-            self._on_nav_key(Qt.Key_Down)
-        elif pressed(XINPUT_GAMEPAD_A):
-            self._on_nav_key(Qt.Key_Return)
-        elif pressed(XINPUT_GAMEPAD_B):
-            self._on_nav_key(Qt.Key_Escape)
+        if pressed(mapping["up"]):    self._gamepad_up()
+        if pressed(mapping["down"]):  self._gamepad_down()
+        if pressed(mapping["left"]):  self._gamepad_left()
+        if pressed(mapping["right"]): self._gamepad_right()
+        if pressed(mapping["confirm"]): self._gamepad_confirm()
+        if pressed(mapping["back"]):    self._gamepad_back()
 
-        # Stick deadzone logic
-        def normalize_stick(val):
-            # Normalize -32768 to 32767 -> -1.0 to 1.0
-            if abs(val) < 8000: return 0.0 # deadzone
-            return val / 32767.0
+        # Left stick — only trigger on crossing deadzone threshold
+        stick_up    = ly >  dz and prev_ly <= dz
+        stick_down  = ly < -dz and prev_ly >= -dz
+        stick_left  = lx < -dz and prev_lx >= -dz
+        stick_right = lx >  dz and prev_lx <= dz
+        
+        if stick_up:    self._gamepad_up()
+        if stick_down:  self._gamepad_down()
+        if stick_left:  self._gamepad_left()
+        if stick_right: self._gamepad_right()
 
-        stick_x = normalize_stick(state.Gamepad.sThumbLX)
-        stick_y = normalize_stick(state.Gamepad.sThumbLY)
+        self._prev_buttons = buttons
+        self._prev_lx = lx
+        self._prev_ly = ly
 
-        if abs(stick_x) > 0.5 and abs(self._last_axis[0]) <= 0.5:
-            self._on_nav_key(Qt.Key_Right if stick_x > 0 else Qt.Key_Left)
-        if abs(stick_y) > 0.5 and abs(self._last_axis[1]) <= 0.5:
-            self._on_nav_key(Qt.Key_Down if stick_y < 0 else Qt.Key_Up) # Y is inverted
-
-        self._last_buttons = buttons
-        self._last_axis = [stick_x, stick_y]
+    def _gamepad_up(self):      self._on_nav_key(Qt.Key_Up)
+    def _gamepad_down(self):    self._on_nav_key(Qt.Key_Down)
+    def _gamepad_left(self):    self._on_nav_key(Qt.Key_Left)
+    def _gamepad_right(self):   self._on_nav_key(Qt.Key_Right)
+    def _gamepad_confirm(self): self._on_nav_key(Qt.Key_Return)
+    def _gamepad_back(self):    self._on_nav_key(Qt.Key_Escape)
 
     def keyPressEvent(self, event):
         if self._on_nav_key(event.key()):

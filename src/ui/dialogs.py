@@ -649,6 +649,31 @@ class SettingsDialog(QDialog):
         ll.addStretch()
         layout.addLayout(ll)
         
+        # Controller / Gamepad
+        layout.addSpacing(10)
+        layout.addWidget(QLabel("<b>Controller / Gamepad:</b>"))
+        gl = QHBoxLayout()
+        gl.addWidget(QLabel("Controller Type:"))
+        self.controller_combo = QComboBox()
+        self.controller_combo.addItem("Xbox / XInput", "xinput")
+        self.controller_combo.addItem("PlayStation 4 (DS4)", "ps4")
+        self.controller_combo.addItem("PlayStation 5 (DualSense)", "ps5")
+        self.controller_combo.addItem("Nintendo Switch Pro", "switch")
+        self.controller_combo.addItem("Generic / Other", "generic")
+        
+        current_type = self.config.get("controller_type", "xinput")
+        idx = self.controller_combo.findData(current_type)
+        if idx >= 0: self.controller_combo.setCurrentIndex(idx)
+        self.controller_combo.currentIndexChanged.connect(self._on_controller_type_changed)
+        gl.addWidget(self.controller_combo)
+        gl.addStretch()
+        layout.addLayout(gl)
+        
+        self.mapping_preview = QLabel()
+        self.mapping_preview.setStyleSheet("color: #888; font-size: 10px; margin-top: 2px;")
+        self._update_mapping_preview()
+        layout.addWidget(self.mapping_preview)
+
         layout.addSpacing(10)
         ub = QPushButton("Check for Updates")
         ub.clicked.connect(self.check_updates)
@@ -763,6 +788,22 @@ class SettingsDialog(QDialog):
             self.main_window.client.logout()
             self.config.set("password", None)
             sys.exit(0)
+
+    def _on_controller_type_changed(self):
+        selected_type = self.controller_combo.currentData()
+        self.config.set("controller_type", selected_type)
+        self._update_mapping_preview()
+
+    def _update_mapping_preview(self):
+        ctype = self.controller_combo.currentData()
+        preview = {
+            "xinput": "Xbox: A=Confirm, B=Back, LStick=Navigate",
+            "ps4": "PS4: ✕=Confirm, ○=Back, LStick=Navigate",
+            "ps5": "PS5: ✕=Confirm, ○=Back, LStick=Navigate",
+            "switch": "Switch: A=Confirm, B=Back, LStick=Navigate",
+            "generic": "Generic: Btn0=Confirm, Btn1=Back"
+        }.get(ctype, "")
+        self.mapping_preview.setText(preview)
 
 class GameDetailDialog(QDialog):
     def __init__(self, game, client, config, main_window, parent=None):

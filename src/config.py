@@ -57,6 +57,7 @@ class ConfigManager:
         "conflict_behavior": "ask",
         "sync_interval_seconds": 120,
         "pcgamingwiki_enabled": True,
+        "controller_type": "xinput",
         "base_rom_path": str(Path.home() / "Games" / "ROMs"),
         "base_emu_path": str(Path.home() / "Games" / "Emulators"),
         "preferred_emulators": {

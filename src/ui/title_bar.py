@@ -54,6 +54,13 @@ class WingosyTitleBar(QWidget):
         self.status_text.setStyleSheet("color: #aaa; font-size: 11px;")
         self.layout.addWidget(self.status_text)
 
+        # Gamepad Indicator
+        self.gamepad_indicator = QLabel("🎮")
+        self.gamepad_indicator.setToolTip("Gamepad connected")
+        self.gamepad_indicator.setVisible(False)
+        self.gamepad_indicator.setStyleSheet("color: #4caf50; font-size: 14px; padding: 0 10px;")
+        self.layout.addWidget(self.gamepad_indicator)
+
         # CENTER (Stretch)
         self.layout.addStretch()
 
