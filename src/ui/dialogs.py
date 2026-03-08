@@ -21,7 +21,7 @@ from src.ui.threads import (UpdaterThread, SelfUpdateThread,
                              ExtractionThread, WikiFetcherThread)
 from src.ui.widgets import format_speed, format_size, get_resource_path
 from src.platforms import RETROARCH_PLATFORMS, RETROARCH_CORES, platform_matches
-from src import emulators, windows_saves
+from src import emulators, windows_saves, download_registry
 from src.utils import read_retroarch_cfg, write_retroarch_cfg_values, zip_path, extract_strip_root
 
 _retroarch_autosave_checked = False
@@ -587,94 +587,268 @@ class GameDetailDialog(QDialog):
         self._conflict_shown = False
         self._is_windows = game.get("platform_slug") in WINDOWS_PLATFORM_SLUGS
         self._local_rom_path = self._get_local_rom_path()
-        
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        
+
         title_label = QLabel(game.get('name'))
         title_label.setStyleSheet("font-size: 20pt; font-weight: bold; color: #1e88e5;")
         title_label.setWordWrap(True)
         layout.addWidget(title_label)
-        
+
         content_layout = QHBoxLayout()
         content_layout.setSpacing(25)
-        
+
         self.img_label = QLabel()
         self.img_label.setFixedWidth(300)
         self.img_label.setStyleSheet("background: #1a1a1a; border-radius: 6px;")
         content_layout.addWidget(self.img_label)
-        
-        right_column = QVBoxLayout()
-        right_column.setSpacing(0)
-        
-        right_column.addWidget(QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}", styleSheet="font-size: 12pt; margin-bottom: 2px;"))
-        
+
+        self.right_column = QVBoxLayout()
+        self.right_column.setSpacing(0)
+
+        self.right_column.addWidget(QLabel(f"<b>Platform:</b> {game.get('platform_display_name')}", styleSheet="font-size: 12pt; margin-bottom: 2px;"))
+
         total_bytes = sum(f.get('file_size_bytes', 0) for f in game.get('files', []))
-        right_column.addWidget(QLabel(f"<b>Size:</b> {format_size(total_bytes)}", styleSheet="font-size: 12pt; margin-bottom: 8px;"))
-        
+        self.right_column.addWidget(QLabel(f"<b>Size:</b> {format_size(total_bytes)}", styleSheet="font-size: 12pt; margin-bottom: 8px;"))
+
         self.desc_scroll = QScrollArea()
         self.desc_scroll.setWidgetResizable(True)
         self.desc_scroll.setStyleSheet("background: transparent; border: none;")
-        
+
         self.desc_label = QLabel("Loading description...")
         self.desc_label.setWordWrap(True)
         self.desc_label.setAlignment(Qt.AlignTop)
         self.desc_label.setStyleSheet("color: #ccc; font-size: 11pt; line-height: 1.4;")
         self.desc_scroll.setWidget(self.desc_label)
-        right_column.addWidget(self.desc_scroll, 1)
-        
+        self.right_column.addWidget(self.desc_scroll, 1)
+
         self.pbar = QProgressBar()
         self.pbar.setVisible(False)
-        right_column.addWidget(self.pbar)
-        
+        self.pbar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                border-radius: 3px;
+                background: #2d2d2d;
+                height: 8px;
+            }
+            QProgressBar::chunk {
+                border-radius: 3px;
+                background: #0d6efd;
+            }
+        """)
+        self.right_column.addWidget(self.pbar)
+
         self.speed_label = QLabel()
         self.speed_label.setAlignment(Qt.AlignCenter)
-        right_column.addWidget(self.speed_label)
-        
-        actions_layout = QVBoxLayout()
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(4)
-        
+        self.right_column.addWidget(self.speed_label)
+
+        self.actions_layout = QVBoxLayout()
+        self.actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.actions_layout.setSpacing(4)
+
         self.play_btn = QPushButton("▶ PLAY")
         self.play_btn.setStyleSheet("background: #2e7d32; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         self.play_btn.clicked.connect(self.play_game)
-        
+
         self.gs_btn = QPushButton("⚙ Game Settings")
         self.gs_btn.setStyleSheet("background: #455a64; color: white; padding: 8px; font-size: 11pt;")
         self.gs_btn.clicked.connect(self.open_game_settings)
-        
+
         self.un_btn = QPushButton("🗑 Uninstall")
         self.un_btn.setStyleSheet("background: #8e0000; color: white; padding: 6px; font-size: 11pt;")
         self.un_btn.clicked.connect(self.uninstall_game)
-        
+
         self.dl_btn = QPushButton("⬇ DOWNLOAD")
         self.dl_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         self.dl_btn.clicked.connect(self._on_download_clicked)
-        
+
         self.can_btn = QPushButton("Cancel Download")
         self.can_btn.setStyleSheet("background: #c62828; color: white;")
         self.can_btn.setVisible(False)
         self.can_btn.clicked.connect(self.cancel_dl)
-        
-        actions_layout.addWidget(self.play_btn)
-        actions_layout.addWidget(self.gs_btn)
-        actions_layout.addWidget(self.un_btn)
-        actions_layout.addWidget(self.dl_btn)
-        actions_layout.addWidget(self.can_btn)
-        
-        right_column.addLayout(actions_layout)
-        content_layout.addLayout(right_column, 1)
+
+        self.actions_layout.addWidget(self.play_btn)
+        self.actions_layout.addWidget(self.gs_btn)
+        self.actions_layout.addWidget(self.un_btn)
+        self.actions_layout.addWidget(self.dl_btn)
+        self.actions_layout.addWidget(self.can_btn)
+
+        self.right_column.addLayout(self.actions_layout)
+        content_layout.addLayout(self.right_column, 1)
         layout.addLayout(content_layout)
-        
+
         close_btn = QPushButton("Close")
         close_btn.setStyleSheet("background: #333; color: #ccc; padding: 8px; font-size: 14pt;")
         close_btn.clicked.connect(self.reject)
         layout.addWidget(close_btn)
-        
-        self._update_button_states()
+
+        # After building the UI, check registry
+        self._reconnect_active_download()
+            
         self._start_image_fetch()
         self._start_desc_fetch()
+
+    def _reconnect_active_download(self):
+        rom_id = str(self.game["id"])
+        entry = download_registry.get(rom_id)
         
+        if not entry:
+            self._update_button_states()
+            return
+        
+        # Active download or extraction found!
+        row_type = entry["type"]
+        current, total = entry["progress"]
+        
+        self.play_btn.hide()
+        self.dl_btn.hide()
+        self.un_btn.hide()
+        
+        self.pbar.setVisible(True)
+        if total > 0:
+            self.pbar.setRange(0, 100)
+            self.pbar.setValue(int(current / total * 100))
+        else:
+            self.pbar.setRange(0, 0)
+        
+        if row_type == "download":
+            self.speed_label.setText("Downloading...")
+        else:
+            self.speed_label.setText("Extracting...")
+        
+        self.can_btn.show()
+        
+        self._progress_listener = self._on_registry_progress
+        download_registry.add_listener(rom_id, self._progress_listener)
+
+    def _on_registry_progress(self, rom_id, rtype, current, total, speed=0):
+        if rtype == "done" or rtype == "cancelled":
+            download_registry.remove_listener(rom_id, self._progress_listener)
+            self.pbar.setVisible(False)
+            self.can_btn.hide()
+            self.speed_label.setText("")
+            self._update_button_states()
+            return
+        
+        if total > 0:
+            self.pbar.setRange(0, 100)
+            self.pbar.setValue(int(current / total * 100))
+        else:
+            self.pbar.setRange(0, 0)
+        
+        if rtype == "download":
+            self.speed_label.setText(f"Downloading... {format_size(current)} / {format_size(total)}")
+        elif rtype == "extraction":
+            if total > 0:
+                self.speed_label.setText(f"Extracting... {current}/{total} files")
+            else:
+                self.speed_label.setText("Extracting...")
+
+    def download_rom(self, file_obj):
+        if not file_obj: return
+        
+        # Determine target path
+        if self._is_windows:
+            target_dir = Path(self.config.get("windows_games_dir"))
+            target_path = target_dir / file_obj['file_name']
+        else:
+            target_dir = Path(self.config.get("base_rom_path")) / self.game.get('platform_slug')
+            target_path = target_dir / file_obj['file_name']
+            
+        os.makedirs(target_dir, exist_ok=True)
+        
+        self.dl_thread = RomDownloader(self.client, self.game['id'], file_obj['file_name'], str(target_path))
+        download_registry.register_download(self.game['id'], self.game['name'], self.dl_thread)
+        
+        self.dl_thread.progress.connect(lambda d, t, s: download_registry.update_progress(self.game['id'], d, t, s))
+        self.dl_thread.finished.connect(lambda ok, p: self._on_download_finished(ok, p))
+        
+        self.main_window.download_queue.add_download(self.game['name'], self.dl_thread, "download", self.game['id'])
+        self.dl_thread.start()
+        self._reconnect_active_download()
+
+    def _on_download_finished(self, ok, path):
+        if not ok:
+            download_registry.unregister(self.game['id'])
+            return
+            
+        # If it's an archive and we are on Windows, or just need extraction
+        if path.endswith(('.zip', '.7z', '.iso')):
+            # Pre-fetch 7z.exe in background so extraction starts immediately
+            from src.sevenzip import get_7zip_exe
+            
+            class SevenZipFetcher(QThread):
+                ready = Signal(str)
+                def run(self):
+                    exe = get_7zip_exe()
+                    self.ready.emit(exe or "")
+            
+            self.speed_label.setText("Preparing extractor...")
+            self._sz_fetcher = SevenZipFetcher()
+            self._sz_fetcher.ready.connect(lambda exe: self._start_extraction(path))
+            self._sz_fetcher.start()
+        else:
+            download_registry.unregister(self.game['id'])
+            self._update_button_states()
+
+    def _on_extraction_finished(self, path):
+        download_registry.unregister(self.game['id'])
+        self._update_button_states()
+        self.main_window.fetch_library_and_populate()
+
+    def cancel_dl(self):
+        rom_id = str(self.game["id"])
+        entry = download_registry.get(rom_id)
+        if not entry or not entry.get("thread"):
+            return
+
+        rom_name = self.game.get('name', 'this game')
+        if entry["type"] == "extraction":
+            reply = QMessageBox.question(
+                self, "Cancel Extraction",
+                f"Cancel extracting {rom_name}?\n\nWhat should happen to the files extracted so far?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Cancel: return
+            
+            entry["thread"].cancel()
+            if reply == QMessageBox.Discard:
+                def on_cancelled(path):
+                    import shutil
+                    shutil.rmtree(path, ignore_errors=True)
+                entry["thread"].cancelled.connect(on_cancelled)
+        else:
+            reply = QMessageBox.question(
+                self, "Cancel Download",
+                f"Cancel downloading {rom_name}?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Cancel
+            )
+            if reply == QMessageBox.Cancel: return
+            
+            entry["thread"].cancel()
+            if reply == QMessageBox.Discard:
+                def on_cancelled_dl():
+                    p = getattr(entry["thread"], 'file_path', None)
+                    if p and os.path.exists(p):
+                        try: os.remove(p)
+                        except: pass
+                entry["thread"].cancelled.connect(on_cancelled_dl)
+
+        download_registry.update_status(rom_id, "cancelled")
+        QTimer.singleShot(1000, lambda: download_registry.unregister(rom_id))
+        self.can_btn.hide()
+        self.pbar.hide()
+        self._update_button_states()
+
+    def closeEvent(self, event):
+        rom_id = str(self.game["id"])
+        if hasattr(self, '_progress_listener'):
+            download_registry.remove_listener(rom_id, self._progress_listener)
+        super().closeEvent(event)
+
     def _get_local_rom_path(self):
         if self._is_windows:
             wd = self.config.get("windows_games_dir")
@@ -703,6 +877,8 @@ class GameDetailDialog(QDialog):
         self.gs_btn.setVisible(exists and self._is_windows)
         self.un_btn.setVisible(exists)
         self.dl_btn.setVisible(not exists)
+        self.dl_btn.setText("⬇ DOWNLOAD")
+        self.dl_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         
     def open_game_settings(self):
         if WindowsGameSettingsDialog(self.game, self.config, self.main_window, self).exec() == QDialog.Accepted:
@@ -744,18 +920,69 @@ class GameDetailDialog(QDialog):
                 QMessageBox.critical(self, "Error", str(e))
                 
     def _on_download_clicked(self):
-        if self._is_windows and not self.config.get("windows_games_dir"):
+        windows_dir = self.config.get("windows_games_dir", "")
+        if self._is_windows and not windows_dir:
             directory = QFileDialog.getExistingDirectory(self, "Select Windows Games Folder")
             if directory:
                 self.config.set("windows_games_dir", directory)
+                windows_dir = directory
             else:
                 return
-        
+
         files = self.game.get('files', [])
-        if files:
-            self.download_rom(files[0])
-            
-    def _do_blocking_pull(self, save_info, is_ra):
+        if not files:
+            return
+
+        file_obj = files[0]
+        rom_name = file_obj.get("file_name", "")
+
+        # Windows-specific pre-download checks
+        if self._is_windows and windows_dir:
+            archive_path = Path(windows_dir) / rom_name
+            extracted_dir = Path(windows_dir) / Path(rom_name).stem
+
+            # 1. Check if already installed
+            if extracted_dir.exists() and any(extracted_dir.rglob("*.exe")):
+                QMessageBox.information(
+                    self, "Already Installed",
+                    f"{self.game['name']} appears to already be installed at:\n{extracted_dir}\n\nUse the Play button to launch it."
+                )
+                self._update_button_states()
+                return
+
+            # 2. Check if archive exists
+            if archive_path.exists():
+                reply = QMessageBox.question(
+                    self, "Archive Already Downloaded",
+                    f"{rom_name} already exists in your Windows Games folder.\n\nWould you like to extract it now instead of downloading again?",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Cancel:
+                    return
+                if reply == QMessageBox.Yes:
+                    self._start_extraction(str(archive_path))
+                    return
+
+        self.download_rom(file_obj)
+
+    def _start_extraction(self, path):
+        target_dir = Path(path).parent
+        if self._is_windows:
+            target_dir = target_dir / Path(path).stem
+
+        self.extract_thread = ExtractionThread(path, str(target_dir))
+        download_registry.register_extraction(self.game['id'], self.game['name'], self.extract_thread)
+
+        self.extract_thread.progress.connect(lambda d, t: download_registry.update_progress(self.game['id'], d, t))
+        self.extract_thread.finished.connect(self._on_extraction_finished)
+
+        self.main_window.download_queue.add_download(self.game['name'], self.extract_thread, "extraction", self.game['id'])
+        self.extract_thread.start()
+        self._reconnect_active_download()
+
+    def download_rom(self, file_obj):
+
         watcher = self.main_window.watcher
         rom_id = self.game['id']
         title = self.game['name']
@@ -1064,82 +1291,6 @@ class GameDetailDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             
-    def download_rom(self, file_data):
-        if self._is_windows:
-            target_path = Path(self.config.get("windows_games_dir")) / file_data['file_name']
-        else:
-            base = self.config.get("base_rom_path")
-            os.makedirs(Path(base) / self.game.get('platform_slug', 'unknown'), exist_ok=True)
-            target_path, _ = QFileDialog.getSaveFileName(self, "Save ROM", str(Path(base) / self.game.get('platform_slug', 'unknown') / file_data['file_name']))
-            if not target_path:
-                return
-            target_path = Path(target_path)
-            
-        self.dl_btn.setVisible(False)
-        self.can_btn.setVisible(True)
-        self.pbar.setVisible(True)
-        self.speed_label.setText("Downloading...")
-        
-        t = RomDownloader(self.client, self.game['id'], file_data['file_name'], str(target_path))
-        self.main_window.active_threads.append(t)
-        self.main_window.download_queue.add_download(self.game.get('name'), t)
-        
-        t.progress.connect(lambda p, s: (self.pbar.setValue(p), self.speed_label.setText(f"Speed: {format_speed(s)}")))
-        t.finished.connect(self.on_download_complete)
-        t.finished.connect(lambda: self.main_window.download_queue.remove_download(t))
-        t.finished.connect(lambda thread=t: self.main_window.active_threads.remove(thread) if thread in self.main_window.active_threads else None)
-        self.dl_thread = t
-        t.start()
-        
-    def cancel_dl(self):
-        if self.dl_thread:
-            self.dl_thread.requestInterruption()
-        self.on_download_complete(False, "Cancelled")
-        
-    def on_download_complete(self, ok, path):
-        if not ok:
-            self.can_btn.setVisible(False)
-            self.pbar.setVisible(False)
-            self.speed_label.setText("")
-            self._update_button_states()
-            if path != "Cancelled":
-                QMessageBox.critical(self, "Error", f"Failed: {path}")
-            return
-            
-        if self._is_windows:
-            win_dir = self.config.get("windows_games_dir")
-            if not win_dir:
-                QMessageBox.warning(self, "Error", "Set folder in Settings.")
-                self.can_btn.setVisible(False)
-                self.pbar.setVisible(False)
-                self.speed_label.setText("")
-                return
-                
-            self.speed_label.setText("Extracting...")
-            fs_name = self.game.get('fs_name')
-            final_target = Path(win_dir) / Path(fs_name).stem if fs_name else None
-            self._local_rom_path = final_target
-            
-            self.et = ExtractionThread(path, str(final_target))
-            self.main_window.active_threads.append(self.et)
-            self.et.progress.connect(self.pbar.setValue)
-            self.et.finished.connect(self.on_extraction_done)
-            self.et.error.connect(lambda m: QMessageBox.warning(self, "Error", m))
-            self.et.start()
-        else:
-            self._local_rom_path = Path(path)
-            self.can_btn.setVisible(False)
-            self.pbar.setVisible(False)
-            self.speed_label.setText("")
-            self._update_button_states()
-            self.main_window.fetch_library_and_populate()
-            
-    def on_extraction_done(self, path):
-        self.pbar.setVisible(False)
-        self.speed_label.setText("✅ Ready to play!")
-        self._update_button_states()
-        self.main_window.fetch_library_and_populate()
-        
     def start_core_download(self, core_name, emu_dir, platform):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Downloading {core_name}")

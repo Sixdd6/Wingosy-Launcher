@@ -183,6 +183,7 @@ class WingosyMainWindow(QMainWindow):
             }
         """)
         self.download_queue = DownloadQueueWidget()
+        self.download_queue.refresh_from_registry()
         self.info_tabs.addTab(self.download_queue, "📥 Downloads")        
 
         self.log_area = QTextEdit()
@@ -196,6 +197,10 @@ class WingosyMainWindow(QMainWindow):
         self.tabs.addTab(self.settings_tab, "Settings")
         
         main_layout.addWidget(self.tabs)
+        
+        # Shortcuts
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=self.library_tab.search_input.setFocus)
+        QShortcut(QKeySequence("F5"), self, activated=self.fetch_library_and_populate)
 
     def _on_tab_changed(self, index):
         self.tabs.setCurrentIndex(index)
