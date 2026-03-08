@@ -31,21 +31,27 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Install virtual display (Linux)
+      - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y 
-            libgl1 
-            libglib2.0-0 
-            xvfb
+          sudo apt-get update -y
+          sudo apt-get install -y libgl1
+          sudo apt-get install -y libglib2.0-0
+          sudo apt-get install -y xvfb
+          sudo apt-get install -y libegl1
+          sudo apt-get install -y libxkbcommon-x11-0
+          sudo apt-get install -y libdbus-1-3
+          sudo apt-get install -y libxcb-cursor0
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -v --tb=short
         env:
-          DISPLAY: :99
+          QT_QPA_PLATFORM: offscreen
+          DISPLAY: ":99"
 
       - name: Run tests (non-Linux)
         if: runner.os != 'Linux'
         run: python -m pytest tests/ -v --tb=short
+        env:
+          QT_QPA_PLATFORM: offscreen
