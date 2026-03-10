@@ -534,8 +534,16 @@ class TestWatcherResilience:
         self.watcher.active_sessions = {}
         self.watcher.running = True
         self.watcher._sync_threads = []
-        # Stub log_signal
-        self.watcher.log_signal = MagicMock()
+        # Stub signals
+        self._log_signal = MagicMock()
+        self._notify_signal = MagicMock()
+        self._path_detected_signal = MagicMock()
+        self._conflict_signal = MagicMock()
+        
+        self.watcher.log_signal = self._log_signal
+        self.watcher.notify_signal = self._notify_signal
+        self.watcher.path_detected_signal = self._path_detected_signal
+        self.watcher.conflict_signal = self._conflict_signal
 
     def test_watcher_continues_after_resolve_error(self):
         """Test that track_session handles resolve_save_path exceptions."""

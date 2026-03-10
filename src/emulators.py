@@ -104,16 +104,80 @@ DEFAULT_EMULATORS = [
         "conflict_behavior": "ask"
     },
     {
+        "id": "xemu",
+        "name": "Xemu",
+        "executable_path": "",
+        "launch_args": ["-dvd_path", "{rom_path}"],
+        "github": "xemu-project/xemu",
+        "platform_slugs": ["xbox"],
+        "save_resolution": {
+            "mode": "folder",
+            "path": ""
+        },
+        "folder": "xemu",
+        "user_defined": False,
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
+    },
+    {
+        "id": "xenia",
+        "name": "Xenia",
+        "executable_path": "",
+        "launch_args": ["{rom_path}"],
+        "url": "https://github.com/xenia-project/release-builds-windows/releases/latest/download/xenia_master.zip",
+        "platform_slugs": ["xbox360"],
+        "save_resolution": {
+            "mode": "folder",
+            "path": ""
+        },
+        "folder": "xenia",
+        "user_defined": False,
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
+    },
+    {
+        "id": "duckstation",
+        "name": "DuckStation",
+        "executable_path": "",
+        "launch_args": ["-batch", "{rom_path}"],
+        "github": "stenzek/duckstation",
+        "platform_slugs": ["ps", "playstation", "psx"],
+        "save_resolution": {
+            "mode": "folder",
+            "path": ""
+        },
+        "folder": "duckstation",
+        "user_defined": False,
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
+    },
+    {
+        "id": "melonds",
+        "name": "MelonDS",
+        "executable_path": "",
+        "launch_args": ["{rom_path}"],
+        "github": "melonDS-emu/melonDS",
+        "platform_slugs": ["nds", "nintendo-ds"],
+        "save_resolution": {
+            "mode": "file",
+            "path": ""
+        },
+        "folder": "melonds",
+        "user_defined": False,
+        "sync_enabled": True,
+        "conflict_behavior": "ask"
+    },
+    {
         "id": "windows_native",
         "name": "Windows (Native)",
         "executable_path": "",
-        "launch_args": ["{rom_path}"],
-        "platform_slugs": ["windows", "win", "pc", "pc-windows", "windows-games", "win95", "win98"],
+        "launch_args": [],
+        "platform_slugs": ["windows", "win"],
+        "is_native": True,
         "save_resolution": {
-            "mode": "none"
+            "mode": "windows"
         },
         "user_defined": False,
-        "is_native": True,
         "sync_enabled": True,
         "conflict_behavior": "ask"
     }
@@ -132,23 +196,39 @@ def load_emulators_raw():
         with open(EMULATORS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
             
-            # Filter out Yuzu
+            # Filter out deprecated emulators (Yuzu)
             emus = data.get("emulators", [])
             initial_count = len(emus)
             data["emulators"] = [
                 e for e in emus
-                if not (e.get("id", "").lower() == "yuzu" or "yuzu" in e.get("name", "").lower())
+                if not (
+                    e.get("id", "").lower() == "yuzu" or 
+                    "yuzu" in e.get("name", "").lower()
+                )
             ]
+            
+            changed = len(data["emulators"]) < initial_count
+            if changed:
+                logging.info("Removed deprecated entries from emulators")
             
             # Ensure sync_enabled and conflict_behavior exists for all
             for e in data["emulators"]:
                 if "sync_enabled" not in e:
                     e["sync_enabled"] = True
+                    changed = True
                 if "conflict_behavior" not in e:
                     e["conflict_behavior"] = "ask"
+                    changed = True
+
+            # Merge any new defaults
+            existing_ids = {e.get("id") for e in data["emulators"] if e.get("id")}
+            for default_emu in DEFAULT_EMULATORS:
+                if default_emu["id"] not in existing_ids:
+                    data["emulators"].append(default_emu)
+                    changed = True
+                    logging.info(f"Added new default emulator: {default_emu['id']}")
             
-            if len(data["emulators"]) < initial_count:
-                logging.info("Removed deprecated Yuzu entry from emulators")
+            if changed:
                 save_emulators_raw(data)
                 
             return data

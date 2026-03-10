@@ -235,6 +235,10 @@ class GameDetailPanel(QWidget):
         self.un_btn.setStyleSheet("background: #8e0000; color: white; padding: 8px; font-size: 13pt;")
         self.un_btn.clicked.connect(self.uninstall_game)
 
+        self.cloud_btn = QPushButton("☁️ Cloud Saves")
+        self.cloud_btn.setStyleSheet("background: #0d47a1; color: white; padding: 8px; font-size: 11pt;")
+        self.cloud_btn.clicked.connect(self.open_cloud_manager)
+
         self.dl_btn = QPushButton("⬇ DOWNLOAD")
         self.dl_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold; padding: 12px; font-size: 16pt;")
         self.dl_btn.clicked.connect(self._on_download_clicked)
@@ -463,18 +467,25 @@ class GameDetailPanel(QWidget):
         if self._is_windows and p and p.is_dir():
             exists = any(p.rglob("*.exe"))
         else:
-            exists = p and p.exists()
+            exists = p and p.exists() if p else False
                 
-        self.play_btn.setVisible(exists)
-        self.gs_btn.setVisible(exists and self._is_windows)
-        self.un_btn.setVisible(exists)
-        self.dl_btn.setVisible(not exists)
+        self.play_btn.setVisible(bool(exists))
+        self.gs_btn.setVisible(bool(exists) and self._is_windows)
+        self.un_btn.setVisible(bool(exists))
+        self.dl_btn.setVisible(not bool(exists))
         self.dl_btn.setText("⬇ DOWNLOAD")
         self.dl_btn.setStyleSheet("background: #1565c0; color: white; font-weight: bold; padding: 10px; font-size: 13pt;")
         
     def open_game_settings(self):
         from src.ui.dialogs.windows_settings import WindowsGameSettingsDialog
         dlg = WindowsGameSettingsDialog(self.game, self.config, self.main_window, self)
+        dlg.show()
+        # Keep reference
+        self._child_dlg = dlg
+
+    def open_cloud_manager(self):
+        from src.ui.dialogs.save_sync import CloudSaveManagerDialog
+        dlg = CloudSaveManagerDialog(self.game, self.client, self.config, self.main_window, self)
         dlg.show()
         # Keep reference
         self._child_dlg = dlg
@@ -739,7 +750,7 @@ class GameDetailPanel(QWidget):
                     if rom and win_dir:
                         folder = Path(win_dir) / Path(rom).stem
                         if folder.exists():
-                            exes = [str(p) for p in folder.rglob("*.exe") if not any(ex.lower() in str(p).lower() for e in EXCLUDED_EXES)]
+                            exes = [str(p) for p in folder.rglob("*.exe") if not any(ex_name.lower() in str(p).lower() for ex_name in EXCLUDED_EXES)]
                             if len(exes) == 1:
                                 exe_to_launch = exes[0]
                             elif len(exes) > 1:

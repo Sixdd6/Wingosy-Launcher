@@ -254,6 +254,8 @@ class EmuListWidget(QWidget):
         all_emus = emulators.load_emulators()
         for emu_data in all_emus:
             emu_id = emu_data.get("id")
+            if emu_id == "windows_native":
+                continue
             name = emu_data.get("name")
             is_user = emu_data.get("user_defined", False)
 
