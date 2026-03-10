@@ -183,6 +183,7 @@ class RetroArchStrategy(SaveStrategy):
         # SPECIAL CASE: PSP (Folder-based)
         platform_slug = rom.get("platform_slug", "")
         if platform_slug in ("psp", "playstation-portable"):
+            psp_results = []
             if save_dir and save_dir.is_dir():
                 if self.session_start_time > 0:
                     # We are in handle_exit/mid-session sync. 
@@ -197,11 +198,18 @@ class RetroArchStrategy(SaveStrategy):
                     if changed_dirs:
                         # If multiple changed (unlikely), use the most recently modified one
                         changed_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-                        return [changed_dirs[0]]
+                        psp_results.append(changed_dirs[0])
+                else:
+                    # At start of session or if no change detected yet, return the whole SAVEDATA 
+                    # so watcher captures the state of the entire folder for comparison.
+                    psp_results.append(save_dir)
+            
+            # Also include auto-state if it exists
+            if state and state.exists():
+                psp_results.append(state)
                 
-                # At start of session or if no change detected yet, return the whole SAVEDATA 
-                # so watcher captures the state of the entire folder for comparison.
-                return [save_dir]
+            if psp_results:
+                return psp_results
 
         if srm is not None or save_dir is not None:
             candidates = []
@@ -228,19 +236,30 @@ class RetroArchStrategy(SaveStrategy):
 
     def restore_save_files(self, rom: dict, save_data: bytes, filename: str) -> bool:
         srm, state, save_dir = self._get_ra_paths(rom)
-        dest_dir = save_dir or self._get_retroarch_save_dir()
         rom_stem = self._get_rom_stem(rom)
-
-        if not dest_dir or not rom_stem:
+        if not rom_stem:
             return False
 
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_name = filename if filename.endswith((".srm", ".sav")) else f"{rom_stem}.srm"
+        # Determine target path based on file type
         if ".state" in filename:
-            dest_name = filename
+            # Use specific state path if constructed, else fallback to RA save dir
+            dest = state or (self._get_retroarch_save_dir() / filename if self._get_retroarch_save_dir() else None)
+            if not dest: return False
+            
+            # Enforce .state.auto for PSP
+            platform_slug = rom.get("platform_slug", "")
+            if platform_slug in ("psp", "playstation-portable"):
+                dest = dest.with_name(f"{rom_stem}.state.auto")
+        else:
+            # Save file (.srm, .sav, or PSP SAVEDATA folder content)
+            dest_dir = save_dir or self._get_retroarch_save_dir()
+            if not dest_dir: return False
+            
+            dest_name = filename if filename.endswith((".srm", ".sav")) else f"{rom_stem}.srm"
+            dest = dest_dir / dest_name
 
-        dest = dest_dir / dest_name
         try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(save_data)
             logging.info(f"[RetroArchStrategy] Restored: {dest}")
             return True

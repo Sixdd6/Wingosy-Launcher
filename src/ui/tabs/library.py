@@ -287,6 +287,47 @@ class LibraryTab(QWidget):
 
         self.main_layout.addWidget(self.filter_widget)
 
+        # Installation Toggle Bar
+        self.install_filter_widget = QWidget()
+        self.install_filter_widget.setStyleSheet("background: #111; border-bottom: 1px solid #222;")
+        install_layout = QHBoxLayout(self.install_filter_widget)
+        install_layout.setContentsMargins(10, 5, 10, 5)
+        install_layout.setSpacing(5)
+
+        self.install_filter_group = []
+        self.current_install_filter = "all" # "all", "installed", "not_installed"
+
+        for label, filter_id in [("All", "all"), ("Installed", "installed"), ("Not Installed", "not_installed")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            if filter_id == "all": btn.setChecked(True)
+            
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #222;
+                    color: #888;
+                    border: none;
+                    padding: 6px 15px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: #333;
+                    color: #fff;
+                }
+                QPushButton:checked {
+                    background: #0d6efd;
+                    color: #fff;
+                }
+            """)
+            btn.clicked.connect(lambda checked, fid=filter_id: self._set_install_filter(fid))
+            install_layout.addWidget(btn)
+            self.install_filter_group.append(btn)
+        
+        install_layout.addStretch()
+        self.main_layout.addWidget(self.install_filter_widget)
+
         # Stack area
         self.stack = QStackedWidget()
         
@@ -583,17 +624,22 @@ class LibraryTab(QWidget):
         self._is_loading_batch = True
         self._render_next_batch()
 
+    def _set_install_filter(self, filter_id):
+        self.current_install_filter = filter_id
+        self.apply_filters()
+
     def apply_filters(self):
+        from src import download_registry
         text = self.search_input.text().lower()
         platform = self.platform_filter.currentText()
         self._selected_index = -1 # Reset selection on filter
 
-        # Build filtered game list
+        # build base filtered list by text/platform
         if platform == "⚠️ No Emulator":
             all_known = set(RETROARCH_PLATFORMS)
             for emu in emulators.load_emulators():
                 all_known.update(emu.get("platform_slugs", []))
-            filtered = [
+            base_filtered = [
                 g for g in self.main_window.all_games
                 if g.get("platform_slug") not in all_known
                 and (not text
@@ -601,7 +647,7 @@ class LibraryTab(QWidget):
                      or text in g.get('fs_name', '').lower())
             ]
         else:
-            filtered = [
+            base_filtered = [
                 g for g in self.main_window.all_games
                 if (not text
                     or text in g.get('name', '').lower()
@@ -611,21 +657,65 @@ class LibraryTab(QWidget):
                      or g.get('platform_slug') == platform)
             ]
 
+        # Apply installation status filter
+        filtered = []
+        for g in base_filtered:
+            is_installed = g.get('_local_exists', False) or download_registry.get(str(g.get('id'))) is not None
+            
+            if self.current_install_filter == "installed":
+                if is_installed: filtered.append(g)
+            elif self.current_install_filter == "not_installed":
+                if not is_installed: filtered.append(g)
+            else:
+                filtered.append(g)
+
         platform_changed = (
             not hasattr(self, '_current_platform') or
             self._current_platform != platform
         )
 
         if not platform_changed and self._all_cards:
-            # Same platform — just show/hide existing cards by game id    
-            filtered_ids = set(g.get('id') for g in filtered)
-            for card in self._all_cards:
-                try:
-                    visible = card.game.get('id') in filtered_ids
-                    card.setVisible(visible)
-                    card.set_selected(False)
-                except RuntimeError:
-                    pass
+            # Same platform — just show/hide existing cards and REFLOW them
+            self.grid_widget.setUpdatesEnabled(False)
+            try:
+                filtered_ids = set(g.get('id') for g in filtered)
+                visible_cards = []
+                
+                # 1. Update visibility and collect visible cards
+                for card in self._all_cards:
+                    try:
+                        visible = card.game.get('id') in filtered_ids
+                        card.setVisible(visible)
+                        card.set_selected(False)
+                        if visible:
+                            visible_cards.append(card)
+                    except RuntimeError:
+                        pass
+                
+                # 2. Clear current layout positions (without deleting widgets)
+                while self.grid_layout.count():
+                    item = self.grid_layout.takeAt(0)
+                    # We just take it out, it stays a child of grid_widget
+                
+                # 3. Re-add only visible ones in order
+                _, _, cols = self._get_card_size()
+                for idx, card in enumerate(visible_cards):
+                    row = idx // cols
+                    col = idx % cols
+                    self.grid_layout.addWidget(card, row, col)
+                
+                # 4. Handle "No games match" case
+                if not visible_cards:
+                    self.show_empty_message("No games match your search.")
+                else:
+                    # Clear any empty message labels
+                    for i in range(self.grid_layout.count()):
+                        item = self.grid_layout.itemAt(i)
+                        if item and hasattr(item.widget(), 'text') and "No games" in item.widget().text():
+                            item.widget().deleteLater()
+
+            finally:
+                self.grid_widget.setUpdatesEnabled(True)
         else:
             # Platform changed — rebuild grid
             self.populate_grid(filtered)
@@ -638,6 +728,9 @@ class LibraryTab(QWidget):
             widget = self.grid_layout.itemAt(i).widget()
             if isinstance(widget, GameCard) and widget.game['id'] == game_id:
                 widget.set_local_exists(exists)
+                # Re-apply filters if we are in an install-specific view
+                if self.current_install_filter != "all":
+                    self.apply_filters()
                 break
 
     def populate_games(self, games, status=None):

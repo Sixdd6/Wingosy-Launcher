@@ -438,6 +438,10 @@ class RomMClient:
                 close_after = False
                 filename = "save.zip"
             
+            # Strip .auto suffix 
+            if filename.endswith('.auto'):
+                filename = filename[:-5]
+            
             try:
                 files = {'saveFile': (filename, f, 'application/octet-stream')}
                 r = requests.post(url, params=params, headers=self.get_auth_headers(),
