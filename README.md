@@ -61,7 +61,8 @@ python -m pytest tests/ -v
 
 ```bash
 pip install pyinstaller
-pyinstaller wingosy.spec```
+pyinstaller wingosy.spec
+```
 
 ## License
 GPL-3.0
