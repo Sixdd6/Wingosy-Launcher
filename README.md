@@ -44,21 +44,22 @@
 
 ### Run from source
 
-```
+```bash
 git clone https://github.com/Sixdd6/Wingosy-Launcher-Sixdd
 cd Wingosy-Launcher-Sixdd
 pip install -r requirements.txt
-python main.py```
+python main.py
+```
 
 ### Run tests
 
-```
+```bash
 python -m pytest tests/ -v
 ```
 
 ### Build exe
 
-```
+```bash
 pip install pyinstaller
 pyinstaller wingosy.spec```
 
