@@ -178,6 +178,7 @@ class WingosyWatcher(QThread):
     path_detected_signal = Signal(str, str) # emu_display_name, path
     conflict_signal = Signal(str, str, str, str) # title, local_path, temp_dl, rom_id
     notify_signal = Signal(str, str) # title, msg
+    playtime_updated_signal = Signal(int, int) # rom_id, total_playtime_seconds
 
     def __init__(self, client, config):
         super().__init__()
@@ -211,6 +212,39 @@ class WingosyWatcher(QThread):
                 json.dump(self.sync_cache, f)
         except Exception as e:
             logging.error(f"[Watcher] Cache save error: {e}")
+
+    def _add_local_playtime(self, rom_id, seconds):
+        try:
+            secs = int(seconds)
+        except Exception:
+            return
+        if secs <= 0:
+            return
+
+        rom_id_str = str(rom_id)
+        entry = self.sync_cache.get(rom_id_str)
+        if not isinstance(entry, dict):
+            entry = {}
+
+        try:
+            existing = int(entry.get("playtime_seconds") or 0)
+        except Exception:
+            existing = 0
+
+        total = existing + secs
+        entry["playtime_seconds"] = total
+        try:
+            entry["playtime_updated_at"] = datetime.now(timezone.utc).isoformat()
+        except Exception:
+            pass
+
+        self.sync_cache[rom_id_str] = entry
+        self.save_cache()
+
+        try:
+            self.playtime_updated_signal.emit(int(rom_id), int(total))
+        except Exception:
+            pass
 
     def run(self):
         logging.info("🚀 Watcher Active (Process-Specific Mode).")
@@ -467,7 +501,11 @@ class WingosyWatcher(QThread):
         try:
             elapsed = int(time.time() - data.get('start_time', time.time()))
             if elapsed > 10:
-                self.client.update_playtime(data['rom_id'], elapsed)
+                self._add_local_playtime(data['rom_id'], elapsed)
+                try:
+                    self.client.update_playtime(data['rom_id'], elapsed)
+                except Exception:
+                    pass
                 logging.info(f"[Watcher] Playtime updated for {data['title']}: {elapsed}s")
         except Exception as e:
             logging.error(f"[Watcher] Playtime update failed: {e}")

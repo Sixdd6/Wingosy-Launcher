@@ -273,23 +273,50 @@ class DownloadQueueWidget(QWidget):
         self.layout.setContentsMargins(8, 8, 8, 8)
         self.layout.setSpacing(8)
         self.layout.setAlignment(Qt.AlignTop)
-        self._rows = {} # thread: row_widget
+        self._rows_by_thread = {} # thread: row_widget
+        self._rows_by_rom_id = {} # rom_id: row_widget
 
     def refresh_from_registry(self):
         for rom_id, entry in download_registry.all().items():
-            if entry["thread"] not in self._rows:
+            if str(rom_id) not in self._rows_by_rom_id:
                 self.add_download(entry["rom_name"], entry["thread"], entry["type"], rom_id)
 
     def add_download(self, name, thread, row_type="download", rom_id=None):
-        if thread in self._rows:
+        rom_id_str = str(rom_id) if rom_id is not None else None
+
+        if rom_id_str and rom_id_str in self._rows_by_rom_id:
+            row = self._rows_by_rom_id[rom_id_str]
+            old_thread = getattr(row, "thread", None)
+            if old_thread in self._rows_by_thread:
+                del self._rows_by_thread[old_thread]
+
+            row.thread = thread
+            self._rows_by_thread[thread] = row
+
+            entry = download_registry.get(rom_id_str)
+            if entry:
+                current, total = entry.get("progress", (0, 0))
+                try:
+                    row.on_registry_update(rom_id_str, entry.get("type", row_type), current, total, 0)
+                except TypeError:
+                    row.on_registry_update(rom_id_str, entry.get("type", row_type), current, total)
             return
+
+        if thread in self._rows_by_thread:
+            return
+
         row = DownloadRow(rom_id, name, thread, row_type, self)
         self.layout.addWidget(row)
-        self._rows[thread] = row
+        self._rows_by_thread[thread] = row
+        if rom_id_str:
+            self._rows_by_rom_id[rom_id_str] = row
 
     def remove_download(self, thread):
-        if thread in self._rows:
-            row_widget = self._rows[thread]
+        if thread in self._rows_by_thread:
+            row_widget = self._rows_by_thread[thread]
             self.layout.removeWidget(row_widget)
             row_widget.deleteLater()
-            del self._rows[thread]
+            del self._rows_by_thread[thread]
+            rom_id_str = getattr(row_widget, "rom_id", None)
+            if rom_id_str and self._rows_by_rom_id.get(str(rom_id_str)) is row_widget:
+                del self._rows_by_rom_id[str(rom_id_str)]

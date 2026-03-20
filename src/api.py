@@ -274,6 +274,39 @@ class RomMClient:
             print(f"[API] Error fetching ROM details for {rom_id}: {e}")
             return None
 
+    def update_playtime(self, rom_id, seconds):
+        try:
+            secs = int(seconds)
+        except Exception:
+            return False
+        if secs <= 0:
+            return False
+
+        rid = str(rom_id)
+        headers = self.get_auth_headers()
+
+        candidates = [
+            ("PATCH", f"{self.host}/api/roms/{rid}", {"playtime_seconds": secs}),
+            ("PATCH", f"{self.host}/api/roms/{rid}", {"playtime": secs}),
+            ("POST", f"{self.host}/api/roms/{rid}/playtime", {"seconds": secs}),
+            ("POST", f"{self.host}/api/roms/{rid}/playtime", {"playtime_seconds": secs}),
+        ]
+
+        for method, url, payload in candidates:
+            try:
+                if method == "PATCH":
+                    r = requests.patch(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, verify=CERTIFI_PATH)
+                else:
+                    r = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, verify=CERTIFI_PATH)
+
+                if r.status_code in (200, 201, 204):
+                    return True
+                if r.status_code in (400, 404, 405, 422):
+                    continue
+            except Exception:
+                continue
+        return False
+
     def get_cover_url(self, game):
         path = game.get('path_cover_large') or game.get('path_cover_small') 
         if path:

@@ -427,13 +427,15 @@ class SettingsTab(QWidget):
         
     def on_update_result(self, available, version, url):
         if available:
-            self.latest_url = url
-            self.up_btn.setText(f"Upgrade to v{version}")
-            self.up_btn.setVisible(True)
-            if getattr(sys, 'frozen', False):
-                self.up_btn.clicked.connect(self.start_self_update)
-            else:
-                self.up_btn.clicked.connect(lambda: webbrowser.open(url))
+            choice = QMessageBox.question(
+                self,
+                "Update Available",
+                f"A new version is available: v{version}\n\nOpen the releases page?",
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Yes,
+            )
+            if choice == QMessageBox.Yes:
+                webbrowser.open(url)
         else:
             QMessageBox.information(self, "No Updates", "You are on the latest version.")
             

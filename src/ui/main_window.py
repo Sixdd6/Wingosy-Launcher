@@ -3,11 +3,12 @@ import sys
 import shutil
 import zipfile
 import logging
+import time
 from pathlib import Path
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QTabWidget, QTextEdit, 
-                             QSystemTrayIcon, QMenu, QApplication, QFileDialog, 
+                             QApplication, QFileDialog, 
                              QMessageBox, QDialog, QLineEdit, QDialogButtonBox, 
                              QScrollArea, QFrame)
 from PySide6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut
@@ -64,6 +65,7 @@ class WingosyMainWindow(QMainWindow):
     def __init__(self, config_manager, client, watcher_class, version):
         super().__init__()
         self.config, self.client, self.watcher_class, self.version = config_manager, client, watcher_class, version
+        self.tray_icon = None
         self.watcher = None
         self.active_threads = []
         self.image_fetch_queue = []
@@ -72,9 +74,11 @@ class WingosyMainWindow(QMainWindow):
         self.all_games = []
         self._loaded_game_ids = set()
         self._force_refreshing = False
+        self._frame_applied = False
+        self._last_frame_apply_ts = 0.0
         
         # Custom window frame setup
-        self.setWindowFlags(Qt.Window)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
 
         # After window is shown, call Windows API to remove title bar but keep resize border
         QTimer.singleShot(0, self._apply_windows_frame)
@@ -93,7 +97,6 @@ class WingosyMainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
             
         self.setup_ui()
-        self.setup_tray()
         self.ensure_watcher_running()
 
         # 1. Load cache immediately — show games NOW
@@ -202,6 +205,8 @@ class WingosyMainWindow(QMainWindow):
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange and hasattr(self, "title_bar"):
             self.title_bar.set_maximized(self.isMaximized())
+            QTimer.singleShot(0, self._apply_windows_frame)
+
         super().changeEvent(event)
 
     def _on_tab_changed(self, index):
@@ -488,7 +493,7 @@ class WingosyMainWindow(QMainWindow):
             if g.get('platform_display_name')
         ))
         self.library_tab.platform_filter.blockSignals(True)
-        previously_selected = self.library_tab.platform_filter.currentText()
+        previously_selected = getattr(self.library_tab, "_platform_selection", None) or self.library_tab.platform_filter.currentText()
         self.library_tab.platform_filter.clear()
         self.library_tab.platform_filter.addItem("All Platforms")
         self.library_tab.platform_filter.addItems(platforms)
@@ -505,6 +510,11 @@ class WingosyMainWindow(QMainWindow):
         idx = self.library_tab.platform_filter.findText(previously_selected)
         if idx >= 0:
             self.library_tab.platform_filter.setCurrentIndex(idx)
+        else:
+            self.library_tab.platform_filter.setCurrentIndex(0)
+            previously_selected = "All Platforms"
+
+        self.library_tab._platform_selection = previously_selected
         self.library_tab.platform_filter.blockSignals(False)
 
     def _populate_from_games(self, games, is_progressive=False):
@@ -1097,7 +1107,7 @@ class WingosyMainWindow(QMainWindow):
 
     @Slot(str, str)
     def show_notification(self, title, msg):
-        self.tray_icon.showMessage(title, msg, QSystemTrayIcon.Information, 3000)
+        pass
 
     def open_settings(self):
         self._on_tab_changed(3)
@@ -1109,17 +1119,26 @@ class WingosyMainWindow(QMainWindow):
             self.watcher.path_detected_signal.connect(self.on_path)
             self.watcher.conflict_signal.connect(self.handle_conflict, Qt.QueuedConnection)
             self.watcher.notify_signal.connect(self.show_notification)
+            if hasattr(self.watcher, 'playtime_updated_signal'):
+                self.watcher.playtime_updated_signal.connect(self._on_playtime_updated, Qt.QueuedConnection)
             self.watcher.start()
 
-    def setup_tray(self):
-        icon_path = get_resource_path("icon.png")
-        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon(QPixmap(32, 32))
-        self.tray_icon = QSystemTrayIcon(icon, self)
-        menu = QMenu()
-        menu.addAction("Show", self.showNormal)
-        menu.addAction("Exit", QApplication.instance().quit)
-        self.tray_icon.setContextMenu(menu)
-        self.tray_icon.show()
+    @Slot(int, int)
+    def _on_playtime_updated(self, rom_id, total_seconds):
+        try:
+            # Only update if details view is currently open for this ROM
+            detail = getattr(self.library_tab, 'detail_panel', None)
+            if not detail:
+                return
+            game = getattr(detail, 'game', {})
+            if not isinstance(game, dict):
+                return
+            if game.get('id') != rom_id:
+                return
+            if hasattr(detail, 'set_playtime_seconds'):
+                detail.set_playtime_seconds(total_seconds)
+        except Exception:
+            return
 
     def closeEvent(self, event):
         # Stop watcher thread gracefully
@@ -1135,16 +1154,19 @@ class WingosyMainWindow(QMainWindow):
         
         settings = QSettings("Wingosy", "WingosyLauncher")
         settings.setValue("geometry", self.saveGeometry())
-        if self.tray_icon.isVisible():
-            self.hide()
-            event.ignore()
-        else:
-            event.accept()
+        event.accept()
 
     def _apply_windows_frame(self):
         import sys
         if sys.platform != "win32":
             return
+        if QApplication.activeModalWidget() is not None:
+            return
+
+        now = time.monotonic()
+        if self._frame_applied and (now - self._last_frame_apply_ts) < 0.5:
+            return
+
         try:
             import ctypes
             import ctypes.wintypes as wintypes
@@ -1185,6 +1207,8 @@ class WingosyMainWindow(QMainWindow):
                          0x0001 |  # SWP_NOSIZE
                          0x0004)   # SWP_NOZORDER
             ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FLAGS)
+            self._frame_applied = True
+            self._last_frame_apply_ts = now
                 
         except Exception as e:
             logging.warning(f"[Frame] Windows frame setup failed: {e}")

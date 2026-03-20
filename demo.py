@@ -44,7 +44,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Wingosy Launcher [DEMO]")
     app.setOrganizationName("Wingosy")
-    app.setQuitOnLastWindowClosed(False)
+    app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
 
     config = ConfigManager()

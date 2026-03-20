@@ -5,3 +5,5 @@ py7zr
 Pillow
 keyring
 cryptography
+pytest
+pyinstaller

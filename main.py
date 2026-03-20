@@ -17,15 +17,36 @@ if getattr(sys, 'frozen', False):
 import logging
 from pathlib import Path
 
+import io
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        elif sys.stdout and hasattr(sys.stdout, 'buffer'):
+            sys.stdout = io.TextIOWrapper(
+                sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True, write_through=True)
+    except Exception:
+        pass
+    try:
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+        elif sys.stderr and hasattr(sys.stderr, 'buffer'):
+            sys.stderr = io.TextIOWrapper(
+                sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True, write_through=True)
+    except Exception:
+        pass
+
 _log_path = Path.home() / ".wingosy" / "app.log"
 _log_path.parent.mkdir(parents=True, exist_ok=True)
 # Overwrite log on each launch so it stays small
 logging.basicConfig(
-    filename=str(_log_path),
-    filemode='w',
     level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(message)s",
-    encoding="utf-8"
+    handlers=[
+        logging.FileHandler(str(_log_path), mode="w", encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+    force=True,
 )
 logging.info("=== Wingosy starting ===")
 logging.info(f"frozen={getattr(sys, 'frozen', False)}")
@@ -38,15 +59,6 @@ from src.config import ConfigManager
 from src.api import RomMClient
 from src.watcher import WingosyWatcher
 from src.ui import WingosyMainWindow, SetupDialog
-
-import io
-if sys.platform == "win32":
-    if sys.stdout and hasattr(sys.stdout, 'buffer'):
-        sys.stdout = io.TextIOWrapper(
-            sys.stdout.buffer, encoding='utf-8', errors='replace')
-    if sys.stderr and hasattr(sys.stderr, 'buffer'):
-        sys.stderr = io.TextIOWrapper(
-            sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 VERSION = "0.6.4"
 
@@ -78,10 +90,39 @@ def _cleanup_old_mei_folders():
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Wingosy Launcher")
-    app.setOrganizationName("Wingosy")
-    app.setQuitOnLastWindowClosed(False) # For system tray
+    app.setApplicationName("Wingosy Launcher - Sixdd")
+    app.setOrganizationName("Wingosy-Sixdd")
+    app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
+    app.setStyleSheet("""
+        QMessageBox QPushButton,
+        QDialogButtonBox QPushButton {
+            background: #2d2d2d;
+            color: #e6e6e6;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 6px 14px;
+            min-height: 24px;
+        }
+        QMessageBox QPushButton:hover,
+        QDialogButtonBox QPushButton:hover {
+            background: #3a3a3a;
+            border-color: #555;
+        }
+        QMessageBox QPushButton:pressed,
+        QDialogButtonBox QPushButton:pressed {
+            background: #242424;
+        }
+        QMessageBox QPushButton:default {
+            border: 1px solid #0d6efd;
+        }
+        QMessageBox QPushButton:disabled,
+        QDialogButtonBox QPushButton:disabled {
+            color: #777;
+            border-color: #333;
+            background: #1f1f1f;
+        }
+    """)
     
     # Cleanup old executable from previous update
     try:

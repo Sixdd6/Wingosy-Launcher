@@ -5,11 +5,12 @@ import logging
 import zipfile
 import time
 from pathlib import Path
+import json
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMessageBox, QProgressBar, QScrollArea, QFileDialog, QApplication, QDialog, QSizePolicy)
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, QPoint
 from PySide6.QtGui import QPixmap, QColor
 
-from src.ui.threads import (RomDownloader, ImageFetcher, ConflictResolveThread, GameDescriptionFetcher, ExtractionThread)
+from src.ui.threads import (RomDownloader, ImageFetcher, ConflictResolveThread, GameDescriptionFetcher, RomDetailsFetcher, ExtractionThread)
 from src.ui.widgets import format_size, get_resource_path, format_speed
 from src.platforms import RETROARCH_CORES
 from src import emulators, windows_saves, download_registry
@@ -19,15 +20,11 @@ from src.utils import read_retroarch_cfg, write_retroarch_cfg_values, extract_st
 _retroarch_autosave_checked = False
 _ppsspp_assets_checked = False
 
-WINDOWS_PLATFORM_SLUGS = ["windows", "win", "pc", "pc-windows", "windows-games", "win95", "win98"]
+WINDOWS_PLATFORM_SLUGS = ["windows", "win", "pc", "pc-windows", "windows-games", "win95", "win98", "win9x", "windows9x"]
 EXCLUDED_EXES = [
     "unins000.exe", "uninstall.exe", "setup.exe",
-    "vcredist", "directx", "dxsetup.exe",
-    "vc_redist", "crashpad_handler.exe",
-    "notification_helper.exe", "UnityCrashHandler",
-    "dotnet", "netfx", "oalinst.exe",
-    "DXSETUP.exe", "installscript",
-    "dx_setup", "redist", "socialclub",
+    "crashpad_handler.exe", "notification_helper.exe", "UnityCrashHandler",
+    "installscript", "redist", "socialclub",
     "epicportal", "launcher", "activation",
     "touchup", "cleanup", "webhelper"
 ]
@@ -132,6 +129,7 @@ class GameDetailPanel(QWidget):
         self.client = client
         self.config = config
         self.main_window = main_window
+        self._uninstall_dialog_open = False
         
         self.dl_thread = None
         self.extract_thread = None
@@ -192,6 +190,37 @@ class GameDetailPanel(QWidget):
 
         total_bytes = sum(f.get('file_size_bytes', 0) for f in game.get('files', []))
         self.right_column.addWidget(QLabel(f"<b>Size:</b> {format_size(total_bytes)}", styleSheet="font-size: 12pt; margin-bottom: 8px; background: transparent;"))
+
+        self.release_label = QLabel("<b>Release:</b> Loading...")
+        self.release_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px; background: transparent;")
+        self.right_column.addWidget(self.release_label)
+
+        self.genres_label = QLabel("<b>Genres:</b> Loading...")
+        self.genres_label.setWordWrap(True)
+        self.genres_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px; background: transparent;")
+        self.right_column.addWidget(self.genres_label)
+
+        self.rating_label = QLabel("<b>Rating:</b> Loading...")
+        self.rating_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px; background: transparent;")
+        self.right_column.addWidget(self.rating_label)
+
+        self.developer_label = QLabel("<b>Developer:</b> Loading...")
+        self.developer_label.setWordWrap(True)
+        self.developer_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px; background: transparent;")
+        self.right_column.addWidget(self.developer_label)
+
+        self.publisher_label = QLabel("<b>Publisher:</b> Loading...")
+        self.publisher_label.setWordWrap(True)
+        self.publisher_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px; background: transparent;")
+        self.right_column.addWidget(self.publisher_label)
+
+        self.players_label = QLabel("<b>Players:</b> Loading...")
+        self.players_label.setStyleSheet("font-size: 12pt; margin-bottom: 2px; background: transparent;")
+        self.right_column.addWidget(self.players_label)
+
+        self.playtime_label = QLabel("<b>Playtime:</b> Loading...")
+        self.playtime_label.setStyleSheet("font-size: 12pt; margin-bottom: 8px; background: transparent;")
+        self.right_column.addWidget(self.playtime_label)
 
         self.desc_scroll = QScrollArea()
         self.desc_scroll.setWidgetResizable(True)
@@ -277,6 +306,7 @@ class GameDetailPanel(QWidget):
             
         self._start_image_fetch()
         self._start_desc_fetch()
+        self._start_metadata_fetch()
 
         self._cover_full_pixmap = None
 
@@ -590,25 +620,286 @@ class GameDetailPanel(QWidget):
         self.dt.finished.connect(lambda t=self.dt: self.main_window.active_threads.remove(t) if t in self.main_window.active_threads else None)
         self.main_window.active_threads.append(self.dt)
         self.dt.start()
+
+    def _start_metadata_fetch(self):
+        self._rom_details_thread = RomDetailsFetcher(self.client, self.game['id'])
+
+        def _safe_apply(rom):
+            try:
+                self._apply_rom_metadata(rom or {})
+            except RuntimeError:
+                pass
+
+        self._rom_details_thread.finished.connect(_safe_apply)
+        self._rom_details_thread.finished.connect(
+            lambda t=self._rom_details_thread: self.main_window.active_threads.remove(t)
+            if t in self.main_window.active_threads else None
+        )
+        self.main_window.active_threads.append(self._rom_details_thread)
+        self._rom_details_thread.start()
+
+    def _apply_rom_metadata(self, rom):
+        md = {}
+        try:
+            igdb = rom.get("igdb_metadata") or {}
+            moby = rom.get("moby_metadata") or {}
+            ss = rom.get("ss_metadata") or {}
+            if isinstance(igdb, dict):
+                md.update(igdb)
+            if isinstance(moby, dict):
+                md.update(moby)
+            if isinstance(ss, dict):
+                md.update(ss)
+        except Exception:
+            md = {}
+
+        release = (
+            rom.get("release_date") or rom.get("released") or rom.get("first_release_date") or
+            md.get("release_date") or md.get("released") or md.get("first_release_date")
+        )
+        release_text = self._format_release_date(release)
+
+        genres_val = (
+            rom.get("genres") or md.get("genres") or
+            rom.get("genre") or md.get("genre")
+        )
+        genres_text = self._format_listish(genres_val)
+
+        rating_val = (
+            rom.get("rating") or rom.get("aggregated_rating") or
+            md.get("rating") or md.get("aggregated_rating")
+        )
+        rating_text = self._format_rating_stars(rating_val)
+
+        dev_val = (
+            rom.get("developer") or rom.get("developers") or
+            md.get("developer") or md.get("developers")
+        )
+        pub_val = (
+            rom.get("publisher") or rom.get("publishers") or
+            md.get("publisher") or md.get("publishers")
+        )
+        dev_text = self._format_listish(dev_val)
+        pub_text = self._format_listish(pub_val)
+
+        players_val = (
+            rom.get("players") or rom.get("num_players") or rom.get("max_players") or
+            md.get("players") or md.get("num_players") or md.get("max_players")
+        )
+        players_text = self._format_players(players_val)
+
+        playtime_val = (
+            rom.get("playtime_seconds") or rom.get("playtime") or rom.get("play_time") or
+            md.get("playtime_seconds") or md.get("playtime") or md.get("play_time")
+        )
+        if not playtime_val:
+            playtime_val = self._get_cached_playtime_seconds(self.game.get("id"))
+        playtime_text = self._format_playtime(playtime_val)
+
+        self.release_label.setText(f"<b>Release:</b> {release_text}")
+        self.genres_label.setText(f"<b>Genres:</b> {genres_text}")
+        self.rating_label.setText(f"<b>Rating:</b> {rating_text}")
+        self.developer_label.setText(f"<b>Developer:</b> {dev_text}")
+        self.publisher_label.setText(f"<b>Publisher:</b> {pub_text}")
+        self.players_label.setText(f"<b>Players:</b> {players_text}")
+        self.playtime_label.setText(f"<b>Playtime:</b> {playtime_text}")
+
+    def _get_cached_playtime_seconds(self, rom_id):
+        if rom_id is None:
+            return None
+        try:
+            cache_path = Path.home() / ".wingosy" / "sync_cache.json"
+            if not cache_path.exists():
+                return None
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return None
+            entry = data.get(str(rom_id))
+            if not isinstance(entry, dict):
+                return None
+            val = entry.get("playtime_seconds")
+            return val
+        except Exception:
+            return None
+
+    def set_playtime_seconds(self, seconds):
+        try:
+            self._cached_playtime_seconds = int(seconds)
+        except Exception:
+            self._cached_playtime_seconds = None
+
+        try:
+            txt = self._format_playtime(self._cached_playtime_seconds)
+            self.playtime_label.setText(f"<b>Playtime:</b> {txt}")
+        except Exception:
+            return
+
+    def _format_release_date(self, v):
+        if not v:
+            return "Unknown"
+        try:
+            if isinstance(v, (int, float)):
+                # Many APIs use unix epoch seconds or ms; disambiguate
+                ts = float(v)
+                if ts > 10_000_000_000:
+                    ts = ts / 1000.0
+                import datetime
+                return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return "Unknown"
+                # Keep it simple: show ISO date if present
+                if "T" in s:
+                    s = s.split("T", 1)[0]
+                # IGDB sometimes returns epoch as string
+                if s.isdigit():
+                    return self._format_release_date(int(s))
+                return s
+            return str(v)
+        except Exception:
+            return "Unknown"
+
+    def _format_listish(self, v):
+        if not v:
+            return "Unknown"
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else "Unknown"
+        if isinstance(v, (list, tuple, set)):
+            parts = []
+            for it in v:
+                if isinstance(it, dict):
+                    name = it.get("name") or it.get("title")
+                    if name:
+                        parts.append(str(name))
+                elif it:
+                    parts.append(str(it))
+            return ", ".join(parts) if parts else "Unknown"
+        if isinstance(v, dict):
+            name = v.get("name") or v.get("title")
+            return str(name) if name else "Unknown"
+        return str(v)
+
+    def _format_rating_stars(self, v):
+        if v is None or v == "":
+            return "Unknown"
+        try:
+            val = float(v)
+            if val <= 0:
+                return "Unknown"
+            # Normalize various scales to 0..5
+            if val <= 5:
+                stars = val
+            elif val <= 10:
+                stars = val / 2.0
+            elif val <= 100:
+                stars = val / 20.0
+            else:
+                stars = 5.0
+            stars = max(0.0, min(5.0, stars))
+            full = int(round(stars))
+            return "".join(["★" if i < full else "☆" for i in range(5)])
+        except Exception:
+            return "Unknown"
+
+    def _format_players(self, v):
+        if not v:
+            return "Unknown"
+        try:
+            if isinstance(v, (int, float)):
+                n = int(v)
+                if n <= 0:
+                    return "Unknown"
+                return str(n)
+            if isinstance(v, str):
+                s = v.strip()
+                return s if s else "Unknown"
+            if isinstance(v, dict):
+                mn = v.get("min") or v.get("min_players")
+                mx = v.get("max") or v.get("max_players")
+                if mn and mx:
+                    return f"{mn}-{mx}"
+                if mx:
+                    return str(mx)
+            return str(v)
+        except Exception:
+            return "Unknown"
+
+    def _format_playtime(self, v):
+        if not v:
+            return "Unknown"
+        try:
+            secs = None
+            if isinstance(v, (int, float)):
+                secs = float(v)
+                # If it's too small, it might actually be minutes
+                if 0 < secs < 1000:
+                    # Heuristic: treat as minutes if not an obvious seconds counter
+                    # (we'll still show it sensibly)
+                    pass
+            elif isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return "Unknown"
+                if s.isdigit():
+                    secs = float(int(s))
+                else:
+                    return s
+            if secs is None:
+                return str(v)
+
+            # If looks like minutes (common in some APIs) convert
+            if secs < 10_000 and secs % 60 != 0 and secs < 600:
+                # leave as seconds
+                pass
+
+            total_seconds = int(secs)
+            if total_seconds < 60:
+                return f"{total_seconds}s"
+            mins = total_seconds // 60
+            if mins < 60:
+                return f"{mins}m"
+            hrs = mins // 60
+            rem_m = mins % 60
+            if rem_m == 0:
+                return f"{hrs}h"
+            return f"{hrs}h {rem_m}m"
+        except Exception:
+            return "Unknown"
         
     def uninstall_game(self):
+        if self._uninstall_dialog_open:
+            return
+
+        self._uninstall_dialog_open = True
+        self.un_btn.setEnabled(False)
+
         msg = f"Are you sure you want to delete {self.game.get('name')}?"
         if self._is_windows:
             msg = f"Permanently delete ALL files in:\n{self._local_rom_path}?"
             
-        if QMessageBox.question(self, "Uninstall — Wingosy", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+        try:
+            if QMessageBox.question(self, "Uninstall — Wingosy", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+                try:
+                    p = self._local_rom_path
+                    if p.exists():
+                        if p.is_dir():
+                            shutil.rmtree(p)
+                        else:
+                            os.remove(p)
+                        self.main_window.log(f"🗑 {self.game.get('name')} uninstalled")
+                        self._update_button_states()
+                        self.main_window.library_tab.apply_filters()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error — Wingosy", str(e))
+        finally:
+            self._uninstall_dialog_open = False
             try:
-                p = self._local_rom_path
-                if p.exists():
-                    if p.is_dir():
-                        shutil.rmtree(p)
-                    else:
-                        os.remove(p)
-                    self.main_window.log(f"🗑 {self.game.get('name')} uninstalled")
-                    self._update_button_states()
-                    self.main_window.library_tab.apply_filters()
-            except Exception as e:
-                QMessageBox.critical(self, "Error — Wingosy", str(e))
+                self.un_btn.setEnabled(True)
+            except RuntimeError:
+                pass
                 
     def _on_download_clicked(self):
         # Prevent duplicate downloads
@@ -947,14 +1238,12 @@ class GameDetailPanel(QWidget):
             self.main_window.log(f"🚀 Launched {emu_data['name']} (PID: {proc.pid})")
             if self.main_window.watcher:
                 QTimer.singleShot(0, lambda: self.main_window.watcher.track_session(proc, emu_data["name"], self.game, str(local_rom), exe_path, skip_pull=True))
-            self._close()
         except Exception as e:
             QMessageBox.critical(self, "Error — Wingosy", str(e))
 
     def _launch_windows_exe(self, exe_path):
         self.main_window.log(f"🚀 Launching Windows Game: {os.path.basename(exe_path)}")
         proc = subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path))
-        self._close()
         if self.main_window.watcher:
             self.main_window.watcher.track_session(proc, "Windows", self.game, exe_path, exe_path, skip_pull=True)
 

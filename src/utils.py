@@ -4,7 +4,44 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
-def resolve_local_rom_path(game: dict, config_data: dict) -> Optional[Path]:
+def build_rom_search_index(*roots: Path):
+    index = {
+        "files_by_name": {},
+        "dirs_by_name": {},
+        "files_by_stem": {},
+    }
+
+    for root in roots:
+        if not root:
+            continue
+        try:
+            root = Path(root)
+        except Exception:
+            continue
+        if not root.exists() or not root.is_dir():
+            continue
+
+        for dirpath, dirnames, filenames in os.walk(str(root)):
+            try:
+                dp = Path(dirpath)
+            except Exception:
+                continue
+
+            for d in dirnames:
+                if d not in index["dirs_by_name"]:
+                    index["dirs_by_name"][d] = dp / d
+
+            for f in filenames:
+                if f not in index["files_by_name"]:
+                    p = dp / f
+                    index["files_by_name"][f] = p
+                    stem = p.stem
+                    index["files_by_stem"].setdefault(stem, []).append(p)
+
+    return index
+
+
+def resolve_local_rom_path(game: dict, config_data: dict, search_index: Optional[dict] = None) -> Optional[Path]:
     """
     Robustly find a ROM on disk using multiple strategies:
     1. Check base_rom_path / platform / filename
@@ -124,6 +161,30 @@ def resolve_local_rom_path(game: dict, config_data: dict) -> Optional[Path]:
         
     # 5. Recursive Search (v0.5.7 legacy fallback)
     # Only do this if base_rom is a valid directory to avoid hangs
+    if search_index:
+        try:
+            p_dir = search_index.get("dirs_by_name", {}).get(stem)
+            if p_dir and Path(p_dir).exists() and Path(p_dir).is_dir():
+                return Path(p_dir)
+
+            all_names = [n for n in [rom_name, file_obj_name] if n]
+            for name in all_names:
+                p = search_index.get("files_by_name", {}).get(name)
+                if p and Path(p).exists() and not is_excluded(Path(p)):
+                    return Path(p)
+
+            for ext in extensions:
+                p = search_index.get("files_by_name", {}).get(stem + ext)
+                if p and Path(p).exists() and not is_excluded(Path(p)):
+                    return Path(p)
+
+            for p in search_index.get("files_by_stem", {}).get(stem, []) or []:
+                p = Path(p)
+                if p.exists() and p.is_file() and not is_excluded(p):
+                    return p
+        except Exception:
+            pass
+
     if base_path.is_dir():
         # Build set of all candidate names including original
         all_candidates = {n for n in [rom_name, file_obj_name] if n} | {stem + ext for ext in extensions} | {stem}

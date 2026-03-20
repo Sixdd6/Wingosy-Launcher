@@ -42,7 +42,21 @@ class LocalDiscoveryWorker(QThread):
         self._is_running = False
 
     def run(self):
-        from src.utils import resolve_local_rom_path
+        from src.utils import resolve_local_rom_path, build_rom_search_index
+
+        base_rom = self.config_data.get("base_rom_path")
+        win_dir = self.config_data.get("windows_games_dir")
+        search_index = None
+        try:
+            roots = []
+            if base_rom:
+                roots.append(Path(base_rom))
+            if win_dir:
+                roots.append(Path(win_dir))
+            if roots:
+                search_index = build_rom_search_index(*roots)
+        except Exception:
+            search_index = None
         for game in self.games:
             if not self._is_running:
                 break
@@ -52,7 +66,7 @@ class LocalDiscoveryWorker(QThread):
                 continue
 
             try:
-                path = resolve_local_rom_path(game, self.config_data)
+                path = resolve_local_rom_path(game, self.config_data, search_index=search_index)
                 if path and path.exists():
                     self.rom_discovered.emit(game['id'], str(path))
             except Exception as e:
@@ -114,6 +128,19 @@ class GameDescriptionFetcher(QThread):
             self.finished.emit(summary or "No description available.")      
         except Exception:
             self.finished.emit("No description available.")
+
+class RomDetailsFetcher(QThread):
+    finished = Signal(object)
+    def __init__(self, client, rom_id):
+        super().__init__()
+        self.client = client
+        self.rom_id = rom_id
+    def run(self):
+        try:
+            rom = self.client.get_rom_details(self.rom_id)
+            self.finished.emit(rom or {})
+        except Exception:
+            self.finished.emit({})
 
 class ExtractionThread(QThread):
     progress  = Signal(int, int) # (current, total)
@@ -529,18 +556,14 @@ class UpdaterThread(QThread):
         self.current_version = current_version
     def run(self):
         try:
-            api_url = "https://api.github.com/repos/abduznik/Wingosy-Launcher/releases/latest"
+            api_url = "https://api.github.com/repos/Sixdd6/Wingosy-Launcher/releases/latest"
             headers = {'User-Agent': 'Mozilla/5.0'}
             verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
             resp = requests.get(api_url, headers=headers, timeout=10, verify=verify).json()
             latest_version = resp.get("tag_name", "").replace("v", "")      
-            if latest_version and latest_version != self.current_version:   
-                download_url = ""
-                for asset in resp.get("assets", []):
-                    if asset["name"].lower().endswith(".exe"):
-                        download_url = asset["browser_download_url"]        
-                        break
-                self.finished.emit(True, latest_version, download_url)      
+            if latest_version and latest_version != self.current_version:
+                release_page_url = resp.get("html_url") or "https://github.com/Sixdd6/Wingosy-Launcher/releases"
+                self.finished.emit(True, latest_version, release_page_url)
             else:
                 self.finished.emit(False, latest_version, "")
         except Exception:

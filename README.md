@@ -5,7 +5,7 @@
 # Wingosy
 > A game launcher and cloud save sync client for RomM on Windows. Browse your library, launch games, and keep saves backed up automatically.
 
-![Tests](https://github.com/abduznik/Wingosy-Launcher/actions/workflows/test.yml/badge.svg)
+![Tests](https://github.com/Sixdd6/Wingosy-Launcher/actions/workflows/test.yml/badge.svg)
 
 ## Features
 - Browse full RomM library with cover art, ratings, platform filter and search
@@ -76,7 +76,7 @@
 
 ## Getting Started (for regular users)
 
-1. Download the latest `Wingosy.exe` from [Releases](https://github.com/abduznik/Wingosy-Launcher/releases)
+1. Download the latest `Wingosy.exe` from [Releases](https://github.com/Sixdd6/Wingosy-Launcher/releases)
 2. Run it — no install needed
 3. Enter your RomM server URL and credentials
 4. Set emulator paths in the **Emulators** tab
@@ -104,7 +104,7 @@ That's it. No Python, no dependencies.
 - A running RomM instance
 
 ### Run from source
-    git clone https://github.com/abduznik/Wingosy-Launcher
+    git clone https://github.com/Sixdd6/Wingosy-Launcher
     cd Wingosy-Launcher
     pip install -r requirements.txt
     python main.py

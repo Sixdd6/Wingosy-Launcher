@@ -297,6 +297,7 @@ class LibraryTab(QWidget):
         self.main_window = main_window
         self.client = main_window.client
         self.config = main_window.config
+        self._platform_selection = "All Platforms"
         self._all_cards = []       # all GameCard widgets currently in grid 
         self._render_generation = 0  # incremented to cancel in-flight renders
         self._filter_generation = 0  # incremented on every apply_filters call
@@ -337,7 +338,7 @@ class LibraryTab(QWidget):
         filter_layout.addWidget(QLabel("Platform:"))
         self.platform_filter = QComboBox()
         self.platform_filter.addItem("All Platforms")
-        self.platform_filter.currentTextChanged.connect(self.apply_filters) 
+        self.platform_filter.currentTextChanged.connect(self._on_platform_changed)
         filter_layout.addWidget(self.platform_filter)
 
         self.refresh_btn = QPushButton("🔄 Refresh")
@@ -669,6 +670,10 @@ class LibraryTab(QWidget):
         self.current_install_filter = filter_id
         self.apply_filters()
 
+    def _on_platform_changed(self, text):
+        self._platform_selection = text or "All Platforms"
+        self.apply_filters()
+
     def apply_filters(self):
         from src import download_registry
         
@@ -679,7 +684,7 @@ class LibraryTab(QWidget):
         my_filter_gen = self._filter_generation
 
         text = self.search_input.text().lower()
-        platform = self.platform_filter.currentText()
+        platform = getattr(self, "_platform_selection", None) or self.platform_filter.currentText() or "All Platforms"
         self._selected_index = -1 # Reset selection on filter
 
         # build base filtered list by text/platform
@@ -729,17 +734,30 @@ class LibraryTab(QWidget):
             self._current_platform != platform
         )
 
-        if not platform_changed and self._all_cards:
+        # Only reflow existing widgets if ALL games for this platform view have
+        # been rendered already. If there are pending games, a show/hide pass
+        # cannot include items that haven't had cards created yet, which makes
+        # Installed/Not Installed (and search) incomplete.
+        grid_ids = getattr(self, "_grid_game_ids", None)
+        filtered_ids_set = set(g.get('id') for g in filtered)
+        can_reflow = (
+            not platform_changed
+            and self._all_cards
+            and not self._pending_games
+            and isinstance(grid_ids, set)
+            and filtered_ids_set.issubset(grid_ids)
+        )
+
+        if can_reflow:
             # Same platform — just show/hide existing cards and REFLOW them
             self.grid_widget.setUpdatesEnabled(False)
             try:
-                filtered_ids = set(g.get('id') for g in filtered)
                 visible_cards = []
                 
                 # 1. Update visibility and collect visible cards
                 for card in self._all_cards:
                     try:
-                        visible = card.game.get('id') in filtered_ids
+                        visible = card.game.get('id') in filtered_ids_set
                         card.setVisible(visible)
                         card.set_selected(False)
                         if visible:
@@ -838,7 +856,8 @@ class LibraryTab(QWidget):
         self._pending_games = list(games)  # full list, render in batches   
         self._scroll_debounce.stop()  # cancel any pending debounce on grid reset
         self._is_loading_batch = False
-        self._current_platform = self.platform_filter.currentText()
+        self._current_platform = getattr(self, "_platform_selection", None) or self.platform_filter.currentText()
+        self._grid_game_ids = {g.get('id') for g in games if isinstance(g, dict) and g.get('id') is not None}
         self._selected_index = -1
 
         # Clear grid — use deleteLater for safety
@@ -1036,6 +1055,14 @@ class LibraryTab(QWidget):
         self._resize_all_cards()
 
     def show_empty_message(self, message):
+        # The empty-state UI clears widgets from the layout. If we don't
+        # also reset our internal card tracking, apply_filters() may try to
+        # reflow widgets that have been deleted, leaving the grid stuck blank.
+        self._all_cards = []
+        self._pending_games = []
+        self._load_more_label = None
+        self._is_loading_batch = False
+
         for i in reversed(range(self.grid_layout.count())):
             item = self.grid_layout.itemAt(i)
             if item and item.widget():

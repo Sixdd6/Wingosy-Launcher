@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QMessageBox, QFileDialog, QDialog, QScrollArea)
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QMessageBox, QFileDialog, QDialog, QScrollArea, QComboBox)
 from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from src import windows_saves
 from src.pcgamingwiki import fetch_save_locations
+from src.utils import resolve_local_rom_path
 
 EXCLUDED_EXES = [
     "unins000.exe", "uninstall.exe", "setup.exe",
@@ -74,6 +75,7 @@ class WindowsGameSettingsDialog(QWidget):
         self.config = config
         self.main_window = main_window
         self.wiki_thread = None
+        self._exe_options = []
         
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
         self.setFixedSize(550, 450)
@@ -106,15 +108,11 @@ class WindowsGameSettingsDialog(QWidget):
         self.exe_status = QLabel()
         self.exe_status.setStyleSheet("color: #aaa; background: transparent;")
         layout.addWidget(self.exe_status)
-        
-        eb = QHBoxLayout()
-        ab = QPushButton("🔍 Auto-detect")
-        ab.clicked.connect(self.auto_detect_exe)
-        eb.addWidget(ab)
-        bb = QPushButton("📁 Browse")
-        bb.clicked.connect(self.browse_exe)
-        eb.addWidget(bb)
-        layout.addLayout(eb)
+
+        self.exe_combo = QComboBox()
+        self.exe_combo.currentIndexChanged.connect(self._on_exe_selected)
+        self.exe_combo.activated.connect(self._on_exe_selected)
+        layout.addWidget(self.exe_combo)
         layout.addSpacing(20)
         
         layout.addWidget(QLabel("<h3>Save Directory</h3><p>Where does this game store its saves?</p>"))
@@ -149,6 +147,7 @@ class WindowsGameSettingsDialog(QWidget):
         
         QTimer.singleShot(0, self._apply_dark_frame)
         QTimer.singleShot(50, self._center_on_parent)
+        QTimer.singleShot(0, self.refresh_exe_dropdown)
         self.update_ui()
 
     def _apply_dark_frame(self):
@@ -173,6 +172,9 @@ class WindowsGameSettingsDialog(QWidget):
             self.exe_status.setText(f"<b>{os.path.basename(self.default_exe)}</b><br><small>{self.default_exe}</small>")
         else:
             self.exe_status.setText("No default set")
+
+        if hasattr(self, 'exe_combo'):
+            self._sync_exe_combo_to_default()
             
         self.save_status.setText(self.save_dir or "Not configured")
         
@@ -182,6 +184,91 @@ class WindowsGameSettingsDialog(QWidget):
             self.sync_status.setText("<span style='color: #ff5252;'>⚠️ Folder does not exist</span>")
         else:
             self.sync_status.setText("")
+
+    def _get_game_folder(self):
+        p = resolve_local_rom_path(self.game, self.config)
+        if not p:
+            return None
+        if isinstance(p, Path) and p.exists() and p.is_file():
+            return p.parent
+        if isinstance(p, Path) and p.exists() and p.is_dir():
+            return p
+        return None
+
+    def _find_exes(self, folder):
+        try:
+            exes = [
+                str(p) for p in folder.rglob("*.exe")
+                if not any(e.lower() in str(p).lower() for e in EXCLUDED_EXES)
+            ]
+        except Exception:
+            exes = []
+        exes.sort(key=lambda p: (os.path.basename(p).lower(), p.lower()))
+        return exes
+
+    def refresh_exe_dropdown(self):
+        folder = self._get_game_folder()
+        self._exe_options = self._find_exes(folder) if folder else []
+
+        self.exe_combo.blockSignals(True)
+        self.exe_combo.clear()
+
+        if not self._exe_options:
+            self.exe_combo.addItem("Game folder not found" if not folder else "No executables found", None)
+            self.exe_combo.setEnabled(False)
+            if self.default_exe:
+                self.default_exe = None
+                self.update_ui()
+            self.exe_combo.blockSignals(False)
+            return
+
+        self.exe_combo.setEnabled(True)
+
+        if not self.default_exe:
+            self.exe_combo.addItem("Select executable...", None)
+        for p in self._exe_options:
+            label = os.path.basename(p)
+            if folder:
+                try:
+                    rel = os.path.relpath(p, folder)
+                    label = f"{os.path.basename(p)} — {rel}"
+                except Exception:
+                    pass
+            self.exe_combo.addItem(label, p)
+
+        self._sync_exe_combo_to_default()
+        self.exe_combo.blockSignals(False)
+
+        if not self.default_exe and len(self._exe_options) == 1:
+            idx = self.exe_combo.findData(self._exe_options[0])
+            if idx >= 0:
+                self.exe_combo.setCurrentIndex(idx)
+                self._on_exe_selected(idx)
+
+    def _sync_exe_combo_to_default(self):
+        if not getattr(self, 'exe_combo', None):
+            return
+        if not self.default_exe:
+            return
+        for i in range(self.exe_combo.count()):
+            if self.exe_combo.itemData(i) == self.default_exe:
+                self.exe_combo.blockSignals(True)
+                self.exe_combo.setCurrentIndex(i)
+                self.exe_combo.blockSignals(False)
+                return
+
+    def _on_exe_selected(self, idx):
+        if isinstance(idx, str):
+            idx = self.exe_combo.findText(idx)
+        try:
+            idx = int(idx)
+        except Exception:
+            return
+
+        p = self.exe_combo.itemData(idx)
+        if p:
+            self.default_exe = p
+            self.update_ui()
             
     def auto_detect_exe(self):
         rom = self.game.get('fs_name')
