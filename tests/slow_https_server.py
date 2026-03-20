@@ -182,10 +182,10 @@ def run_server():
         print(f"[{datetime.datetime.now()}] Starting threaded slow HTTP RomM server on http://127.0.0.1:{port}")
     else:
         port = 8443
-        cert_file = "test_cert.pem"
-        key_file = "test_key.pem"
+        cert_file = Path(__file__).with_name("test_cert.pem")
+        key_file = Path(__file__).with_name("test_key.pem")
         
-        if not Path(cert_file).exists() or not Path(key_file).exists():
+        if not cert_file.exists() or not key_file.exists():
             print("Generating self-signed certificate...")
             generate_self_signed_cert(cert_file, key_file)
 
@@ -193,7 +193,7 @@ def run_server():
         httpd = ThreadedHTTPServer(server_address, SlowRomMHandler)
         
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+        context.load_cert_chain(certfile=str(cert_file), keyfile=str(key_file))
         httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
         print(f"[{datetime.datetime.now()}] Starting threaded slow HTTPS RomM server on https://127.0.0.1:{port}")
 

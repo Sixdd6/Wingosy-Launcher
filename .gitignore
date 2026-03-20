@@ -39,6 +39,9 @@ cloud_check_file
 *.bak
 .env
 
+# TLS test artifacts
+*.pem
+
 # OS
 .DS_Store
 Thumbs.db

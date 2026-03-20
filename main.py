@@ -125,15 +125,6 @@ def main():
         }
     """)
     
-    # Cleanup old executable from previous update
-    try:
-        current_exe = Path(sys.executable).resolve() if getattr(sys, 'frozen', False) else Path(sys.argv[0]).resolve()
-        old_exe = current_exe.parent / "Wingosy_old.exe"
-        if old_exe.exists():
-            old_exe.unlink(missing_ok=True)
-    except Exception:
-        pass
-    
     config = ConfigManager()
     
     # Migrate emulator paths to new emulators.json schema if needed
