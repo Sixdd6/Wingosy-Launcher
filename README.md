@@ -43,6 +43,7 @@
 - A running RomM instance
 
 ### Run from source
+
 ```
 git clone https://github.com/Sixdd6/Wingosy-Launcher-Sixdd
 cd Wingosy-Launcher-Sixdd
@@ -50,11 +51,13 @@ pip install -r requirements.txt
 python main.py```
 
 ### Run tests
+
 ```
 python -m pytest tests/ -v
 ```
 
 ### Build exe
+
 ```
 pip install pyinstaller
 pyinstaller wingosy.spec```
