@@ -6,7 +6,7 @@
 > (A fork of) a game launcher for RomM on Windows. Browse your library, launch games, and keep saves backed up automatically.
 > This fork is created utilizing AI as a coder while I handle the ideation and testing. The end goal is to learn, have fun and create something useful.
 
-![Tests](https://github.com/abduznik/Wingosy-Launcher/actions/workflows/test.yml/badge.svg)
+![Tests](https://github.com/Sixdd6/Wingosy-Launcher-Sixdd/actions/workflows/test.yml/badge.svg)
 
 ## Features
 - Browse your full RomM library with cover art, metadata, platform filter and search
@@ -24,7 +24,7 @@
 
 ## Getting Started (for regular users)
 
-1. Download the latest `Wingosy.exe` from [Releases](https://github.com/abduznik/Wingosy-Launcher/releases)
+1. Download the latest `Wingosy.exe` from [Releases](https://github.com/Sixdd6/Wingosy-Launcher-Sixdd/releases)
 2. Run it - no install needed
 3. Enter your RomM server URL and credentials
 4. Set emulator paths in the **Emulators** tab
