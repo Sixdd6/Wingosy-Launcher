@@ -77,7 +77,7 @@ class WindowsGameSettingsDialog(QWidget):
         self.wiki_thread = None
         self._exe_options = []
         
-        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
         self.setFixedSize(550, 450)
         self.setWindowTitle(f"Game Settings — {game.get('name')} — Wingosy")
         
@@ -139,6 +139,10 @@ class WindowsGameSettingsDialog(QWidget):
         
         btns = QHBoxLayout()
         btns.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet("background: #333; color: #ccc; padding: 8px 20px;")
+        cancel_btn.clicked.connect(self.close)
+        btns.addWidget(cancel_btn)
         save_btn = QPushButton("Save Settings")
         save_btn.setStyleSheet("background: #1565c0; color: white; padding: 8px 20px; font-weight: bold;")
         save_btn.clicked.connect(self.save_and_close)
@@ -149,6 +153,12 @@ class WindowsGameSettingsDialog(QWidget):
         QTimer.singleShot(50, self._center_on_parent)
         QTimer.singleShot(0, self.refresh_exe_dropdown)
         self.update_ui()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
 
     def _apply_dark_frame(self):
         import sys, ctypes

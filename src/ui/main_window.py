@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QApplication, QFileDialog, 
                              QMessageBox, QDialog, QLineEdit, QDialogButtonBox, 
                              QScrollArea, QFrame)
-from PySide6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut
-from PySide6.QtCore import Qt, QSettings, Slot, Signal, QThread, QTimer, QEvent, QPoint, QRect
+from PySide6.QtGui import QIcon, QPixmap, QKeySequence, QShortcut, QDesktopServices
+from PySide6.QtCore import Qt, QSettings, Slot, Signal, QThread, QTimer, QEvent, QPoint, QRect, QUrl
 
 from src.ui.threads import (ImageFetcher, BiosDownloader, DolphinDownloader, 
                             DirectDownloader, GithubDownloader, ConflictResolveThread,
@@ -63,6 +63,9 @@ class LibraryFetchWorker(QThread):
 from src.ui.title_bar import WingosyTitleBar
 
 class WingosyMainWindow(QMainWindow):
+    startup_ready = Signal()
+    initial_library_ready = Signal(bool)
+
     def __init__(self, config_manager, client, watcher_class, version):
         super().__init__()
         self.config, self.client, self.watcher_class, self.version = config_manager, client, watcher_class, version
@@ -121,7 +124,21 @@ class WingosyMainWindow(QMainWindow):
         # 2. Then fetch fresh data in background
         QTimer.singleShot(500, self.fetch_library_and_populate)
 
-        if self.config.data.get("keyring_failed"):
+        self._pending_keyring_warning = bool(self.config.data.get("keyring_failed"))
+        self._pending_welcome = bool(self.config.get("first_run", True))
+
+        self._initial_library_signal_emitted = False
+
+        QTimer.singleShot(0, self.startup_ready.emit)
+
+    def _emit_initial_library_ready(self, ok: bool):
+        if self._initial_library_signal_emitted:
+            return
+        self._initial_library_signal_emitted = True
+        self.initial_library_ready.emit(bool(ok))
+
+    def _show_post_startup_dialogs(self):
+        if self._pending_keyring_warning:
             QMessageBox.warning(
                 self,
                 "Credential Storage Warning",
@@ -130,13 +147,16 @@ class WingosyMainWindow(QMainWindow):
                 "This is less secure than keyring. Consider enabling your OS keyring."
             )
             self.config.data.pop("keyring_failed", None)
+            self._pending_keyring_warning = False
 
-        if self.config.get("first_run", True):
+        if self._pending_welcome:
             WelcomeDialog(self).exec()
             self.config.set("first_run", False)
+            self._pending_welcome = False
 
     def showEvent(self, event):
         super().showEvent(event)
+        QTimer.singleShot(0, self._show_post_startup_dialogs)
         if self._restore_maximized_applied:
             return
         if sys.platform != "win32":
@@ -438,6 +458,7 @@ class WingosyMainWindow(QMainWindow):
         self.library_tab.platform_filter.setEnabled(True)
         if hasattr(self, 'title_bar'):
             self.title_bar.clear_activity()
+        self._emit_initial_library_ready(False)
 
     def _on_library_batch(self, batch, total):
         """Called as each page arrives from parallel fetcher."""
@@ -492,15 +513,18 @@ class WingosyMainWindow(QMainWindow):
             QMessageBox.warning(self, "Session Expired", 
                 "Your session has expired. Please log in again.")
             self._on_tab_changed(3) # Settings
+            self._emit_initial_library_ready(False)
             return
         
         if res is None:
             self.log("❌ Failed to fetch library from server.")
             self.library_tab.set_status("Connection failed.", color="#b71c1c")
+            self._emit_initial_library_ready(False)
             return
         
         if not isinstance(res, list):
             self.log("❌ Unexpected response from server. Check your RomM version.")
+            self._emit_initial_library_ready(False)
             return
 
         self.log(f"✅ Library fully loaded: {len(res)} games")
@@ -527,6 +551,8 @@ class WingosyMainWindow(QMainWindow):
             self.title_bar.clear_activity()
 
         self._start_local_discovery(self.all_games)
+
+        self._emit_initial_library_ready(True)
 
     def _update_platform_filter(self, games):
         platforms = sorted(set(
@@ -891,166 +917,33 @@ class WingosyMainWindow(QMainWindow):
     def dl_emu(self, name):
         try:
             all_emus = emulators.load_emulators()
-            emu = next((e for e in all_emus if e["name"] == name), None)
-            if not emu: return
+            emu = next((e for e in all_emus if e.get("id") == name or e.get("name") == name), None)
+            if not emu:
+                self.log(f"❌ Unknown emulator: {name}")
+                return
 
             source = EMULATOR_SOURCES.get(emu["id"])
             if not source:
                 self.log(f"❌ No download source configured for {name}")
                 return
 
-            self.log(f"[Debug] dl_emu called for: {name}, id: {emu['id']}, source type: {source['type']}")
+            source_type = source.get("type")
+            url = None
+            if source_type == "github":
+                repo = source.get("repo")
+                if repo:
+                    url = f"https://github.com/{repo}/releases/latest"
+            elif source_type == "direct":
+                url = source.get("url")
+            elif source_type == "dolphin_api":
+                url = "https://dolphin-emu.org/download/"
 
-            emu_folder = emu.get("folder", emu["id"])
-            base_emu_dir = Path(self.config.get("base_emu_path") or Path.home() / ".wingosy" / "emulators")
-            target_dir = base_emu_dir / emu_folder
-            os.makedirs(target_dir, exist_ok=True)
+            if not url:
+                self.log(f"❌ No update page configured for {emu.get('name') or name}")
+                return
 
-            def start_download(url, asset_name=None):
-                t = DirectDownloader(url, str(target_dir))
-                display_name = f"{name} ({asset_name})" if asset_name else name
-                self.download_queue.add_download(f"Emulator: {display_name}", t)
-                t.progress.connect(lambda d, t_bytes, s: self.log(f"DL {name}: {100*d/t_bytes if t_bytes > 0 else 0:.1f}% @ {format_speed(s)}"))
-                
-                def on_finished(ok, path, e_data=emu, e_name=name, e_dir=target_dir, thread=t, s_cfg=source):
-                    if ok:
-                        if path.lower().endswith(('.zip', '.7z')):
-                            self.log(f"📦 Extracting {e_name}...")
-                            from src.ui.threads import ExtractionThread
-                            et = ExtractionThread(path, e_dir)
-                            
-                            def on_extracted(success, msg=None, e_data=e_data, e_name=e_name, e_dir=e_dir, p=path, s_cfg=s_cfg):
-                                if success:
-                                    try: os.remove(p)
-                                    except: pass
-                                    finalize_emu(e_data, e_name, e_dir, s_cfg)
-                                else:
-                                    self.log(f"❌ Extraction failed for {e_name}: {msg}")
-
-                            et.finished.connect(lambda: on_extracted(True))
-                            et.error.connect(lambda msg: on_extracted(False, msg))
-                            self.active_threads.append(et)
-                            et.start()
-                        else:
-                            finalize_emu(e_data, e_name, e_dir, s_cfg)
-                    else:
-                        self.log(f"❌ Failed to download {e_name}: {path}")
-                    
-                    self.download_queue.remove_download(thread)
-                    if thread in self.active_threads: self.active_threads.remove(thread)
-
-                def finalize_emu(e_data, e_name, e_dir, s_cfg):
-                    # 1. Try exe_hint first
-                    hint = s_cfg.get("exe_hint")
-                    exe_path = None
-                    if hint:
-                        for p in Path(e_dir).rglob(hint):
-                            exe_path = str(p)
-                            break
-                    
-                    # 2. Fall back to largest .exe
-                    if not exe_path:
-                        max_size = -1
-                        for p in Path(e_dir).rglob("*.exe"):
-                            size = p.stat().st_size
-                            if size > max_size:
-                                    max_size = size
-                                    exe_path = str(p)
-                    
-                    if exe_path:
-                        e_data["executable_path"] = exe_path
-                        emulators.save_emulators(all_emus)
-                        self.log(f"✅ {e_name} downloaded and configured.")
-                        self.emulators_tab.populate_emus()
-                    else:
-                        self.log(f"⚠ {e_name} downloaded, but no .exe found in {e_dir}")
-
-                t.finished.connect(on_finished)
-                self.active_threads.append(t)
-                t.start()
-
-            if source["type"] == "github":
-                # Fetch assets from GitHub
-                import requests
-                repo = source["repo"]
-                self.log(f"🔍 Fetching latest releases for {name}...")
-                api_url = f"https://api.github.com/repos/{repo}/releases/latest"
-                headers = {'User-Agent': 'WingosyLauncher'}
-                verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
-                
-                try:
-                    resp = requests.get(api_url, timeout=15, headers=headers, verify=verify)
-                    self.log(f"[Debug] GitHub API response: {resp.status_code} for {repo}")
-                except Exception as ex:
-                    self.log(f"❌ GitHub API request failed: {ex}")
-                    return
-
-                if resp.status_code != 200:
-                    self.log(f"❌ Failed to fetch GitHub releases for {name}")
-                    return
-                
-                assets = resp.json().get("assets", [])
-                filters = source.get("asset_filters", {})
-                req_k = filters.get("required", [])
-                exc_k = filters.get("excluded", [])
-                
-                valid_assets = []
-                for a in assets:
-                    aname = a["name"].lower()
-                    if not any(aname.endswith(ext) for ext in [".zip", ".7z"]): continue
-                    if any(x in aname for x in exc_k): continue
-                    if all(k in aname for k in req_k):
-                        valid_assets.append(a)
-                
-                if not valid_assets:
-                    self.log(f"❌ No suitable Windows assets found for {name}")
-                    return
-                
-                if len(valid_assets) == 1:
-                    start_download(valid_assets[0]["browser_download_url"], valid_assets[0]["name"])
-                else:
-                    self.picker = AssetPickerDialog(name, valid_assets, self)
-                    self.picker.asset_selected.connect(lambda n, u: start_download(u, n))
-                    self.picker.show()
-
-            elif source["type"] == "direct":
-                start_download(source["url"])
-
-            elif source["type"] == "dolphin_api":
-                # specialized downloader
-                t = DolphinDownloader(str(target_dir))
-                self.download_queue.add_download(f"Emulator: {name}", t)
-                t.progress.connect(lambda d, t_bytes, s: self.log(f"DL {name}: {100*d/t_bytes if t_bytes > 0 else 0:.1f}% @ {format_speed(s)}"))
-                
-                def on_finished_dolphin(ok, path, e_data=emu, e_name=name, e_dir=target_dir, thread=t, s_cfg=source):
-                    if ok:
-                        if path.lower().endswith(('.zip', '.7z')):
-                            self.log(f"📦 Extracting {e_name}...")
-                            from src.ui.threads import ExtractionThread
-                            et = ExtractionThread(path, e_dir)
-                            
-                            def on_extracted_dolphin(success, msg=None, e_data=e_data, e_name=e_name, e_dir=e_dir, p=path, s_cfg=s_cfg):
-                                if success:
-                                    try: os.remove(p)
-                                    except: pass
-                                    finalize_emu(e_data, e_name, e_dir, s_cfg)
-                                else:
-                                    self.log(f"❌ Extraction failed for {e_name}: {msg}")
-
-                            et.finished.connect(lambda: on_extracted_dolphin(True))
-                            et.error.connect(lambda msg: on_extracted_dolphin(False, msg))
-                            self.active_threads.append(et)
-                            et.start()
-                        else:
-                            finalize_emu(e_data, e_name, e_dir, s_cfg)
-                    else:
-                        self.log(f"❌ Failed to download {e_name}: {path}")
-                    self.download_queue.remove_download(thread)
-                    if thread in self.active_threads: self.active_threads.remove(thread)
-
-                t.finished.connect(on_finished_dolphin)
-                self.active_threads.append(t)
-                t.start()
+            self.log(f"🌐 Opening download page for {emu.get('name') or name}...")
+            QDesktopServices.openUrl(QUrl(url))
 
         except Exception as e:
             self.log(f"❌ Error starting emulator download: {e}")

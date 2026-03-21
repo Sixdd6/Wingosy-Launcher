@@ -549,10 +549,17 @@ class GameDetailPanel(QWidget):
         url = self.client.get_cover_url(self.game)
         if url:
             self.it = ImageFetcher(self.game['id'], url)
-            def _safe_set_pixmap(g, p):
+            def _safe_set_pixmap(g, img):
                 try:
-                    if p and not p.isNull():
-                        self._cover_full_pixmap = p
+                    pixmap = None
+                    try:
+                        if img and (not img.isNull()):
+                            pixmap = QPixmap.fromImage(img)
+                    except Exception:
+                        pixmap = None
+
+                    if pixmap and not pixmap.isNull():
+                        self._cover_full_pixmap = pixmap
                         self._update_cover_pixmap()
                     else:
                         self._render_placeholder()
@@ -1288,7 +1295,7 @@ class GameDetailPanel(QWidget):
 
         # 2. Launch
         try:
-            exe_path = emu_data.get("executable_path")
+            exe_path = os.path.normpath(emu_data.get("executable_path") or "")
             
             if emu_data.get("is_native"):
                 saved = windows_saves.get_windows_save(self.game['id'])

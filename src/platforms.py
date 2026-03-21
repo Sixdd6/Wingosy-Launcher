@@ -20,7 +20,7 @@ RETROARCH_PLATFORMS = [
     # Sega home
     "mastersystem", "master-system", "sega-master-system",
     "genesis", "megadrive", "mega-drive", "sega-genesis", "sega-mega-drive",
-    "32x", "sega32x", "sega-32x",
+    "32x", "sega32x", "sega-32x", "sega32",
     "segacd", "sega-cd", "megacd", "mega-cd", "sega-mega-cd",
     "saturn", "sega-saturn",
     "dreamcast", "sega-dreamcast",
@@ -37,7 +37,7 @@ RETROARCH_PLATFORMS = [
     "lynx", "atari-lynx",
     "jaguar", "atari-jaguar",
     # NEC
-    "pcengine", "pc-engine", "turbografx-16", "turbografx16",
+    "pcengine", "pc-engine", "turbografx-16", "turbografx16", "tg16", "turbografx-cd",
     # SNK
     "neogeo", "neo-geo", "ngp", "ngpc",
     "neo-geo-pocket", "neo-geo-pocket-color",
@@ -47,7 +47,7 @@ RETROARCH_PLATFORMS = [
     "wonderswan", "wonderswan-color",
     "msx", "msx2",
     "c64", "commodore-64",
-    "dos", "pc-dos",
+    "dos", "pc-dos", "ms-dos",
     "amiga",
     "scummvm",
 ]
@@ -115,6 +115,8 @@ RETROARCH_CORES = {
     "pc-engine": "mednafen_pce_libretro.dll",
     "turbografx-16": "mednafen_pce_libretro.dll",
     "turbografx16": "mednafen_pce_libretro.dll",
+    "tg16": "mednafen_pce_libretro.dll",
+    "turbografx-cd": "mednafen_pce_libretro.dll",
     # SNK
     "neogeo": "fbalpha2012_neogeo_libretro.dll",
     "neo-geo": "fbalpha2012_neogeo_libretro.dll",
@@ -134,6 +136,7 @@ RETROARCH_CORES = {
     "c64": "vice_x64_libretro.dll",
     "commodore-64": "vice_x64_libretro.dll",
     "dos": "dosbox_pure_libretro.dll",
+    "ms-dos": "dosbox_pure_libretro.dll",
     "pc-dos": "dosbox_pure_libretro.dll",
     "amiga": "puae_libretro.dll",
     "scummvm": "scummvm_libretro.dll",

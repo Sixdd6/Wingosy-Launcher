@@ -1,4 +1,6 @@
 import os
+import shlex
+import subprocess
 from pathlib import Path
 import logging
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,   
@@ -84,6 +86,12 @@ class EmulatorEditDialog(QDialog):
         args_helper = QLabel("<small style='color:#888;'>Use {rom_path} for the game file. Example: --fullscreen {rom_path}</small>")
         form.addRow("", args_helper)
 
+        self.command_preview = QLabel("")
+        self.command_preview.setWordWrap(True)
+        self.command_preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.command_preview.setStyleSheet("color: #bbb; font-family: Consolas, 'Courier New', monospace;")
+        form.addRow("Command Preview:", self.command_preview)
+
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Direct File (.sav/.mcr etc)", "direct_file")
         self.mode_combo.addItem("Folder Sync (zip entire folder)", "folder")
@@ -113,6 +121,10 @@ class EmulatorEditDialog(QDialog):
         self.mode_combo.currentIndexChanged.connect(self.update_visibility) 
         self.update_visibility()
 
+        self.path_input.textChanged.connect(self.update_command_preview)
+        self.args_input.textChanged.connect(self.update_command_preview)
+        self.update_command_preview()
+
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -138,6 +150,35 @@ class EmulatorEditDialog(QDialog):
 
         self.ext_input.setVisible(is_direct)
         self.ext_label.setVisible(is_direct)
+
+    def _build_command_preview_args(self):
+        exe_path = os.path.normpath(self.path_input.text().strip())
+        try:
+            raw_args = shlex.split(self.args_input.text(), posix=False)
+        except ValueError:
+            raw_args = self.args_input.text().split()
+
+        if not exe_path:
+            return []
+
+        rom_example = os.path.normpath(r"C:\Path\To\Game.rom")
+        args = [exe_path]
+        for a in raw_args:
+            expanded = a.replace("{rom_path}", rom_example)
+            if expanded != exe_path:
+                args.append(expanded)
+        return args
+
+    def update_command_preview(self):
+        args = self._build_command_preview_args()
+        if not args:
+            self.command_preview.setText("(set an executable path to see a preview)")
+            return
+
+        try:
+            self.command_preview.setText(subprocess.list2cmdline(args))
+        except Exception:
+            self.command_preview.setText(" ".join(args))
 
     def validate_and_save(self):
         name = self.name_input.text().strip()
@@ -168,7 +209,7 @@ class EmulatorEditDialog(QDialog):
             "id": emu_id,
             "name": name,
             "executable_path": exe,
-            "launch_args": self.args_input.text().split(),
+            "launch_args": (shlex.split(self.args_input.text(), posix=False) if self.args_input.text().strip() else []),
             "platform_slugs": slugs,
             "save_resolution": save_res,
             "user_defined": True,
@@ -183,6 +224,32 @@ class EmuListWidget(QWidget):
         super().__init__()
         self.main_window = main_window
         self.config = main_window.config
+        self._row_button_style = (
+            "QPushButton {"
+            " background: #2f2f2f;"
+            " color: #e6e6e6;"
+            " border: 1px solid #3f3f3f;"
+            " padding: 5px 10px;"
+            " border-radius: 4px;"
+            " font-size: 12px;"
+            " }"
+            "QPushButton:hover { background: #383838; border-color: #565656; }"
+            "QPushButton:pressed { background: #262626; border-color: #1f1f1f; }"
+            "QPushButton:disabled { background: #2a2a2a; color: #888; border-color: #2f2f2f; }"
+        )
+        self._row_button_danger_style = (
+            "QPushButton {"
+            " background: rgba(255, 82, 82, 0.12);"
+            " color: #ff8a8a;"
+            " border: 1px solid rgba(255, 82, 82, 0.35);"
+            " padding: 5px 10px;"
+            " border-radius: 4px;"
+            " font-size: 12px;"
+            " }"
+            "QPushButton:hover { background: rgba(255, 82, 82, 0.18); border-color: rgba(255, 82, 82, 0.55); }"
+            "QPushButton:pressed { background: rgba(255, 82, 82, 0.10); border-color: rgba(255, 82, 82, 0.70); }"
+            "QPushButton:disabled { background: rgba(255, 82, 82, 0.06); color: rgba(255, 138, 138, 0.6); border-color: rgba(255, 82, 82, 0.20); }"
+        )
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -279,20 +346,24 @@ class EmuListWidget(QWidget):
 
             if is_user:
                 btn_edit = QPushButton("📝 Edit")
+                btn_edit.setStyleSheet(self._row_button_style)
                 btn_edit.clicked.connect(lambda checked, eid=emu_id: self.edit_custom_emulator(eid))
                 row_layout.addWidget(btn_edit)
                 btn_del = QPushButton("🗑 Remove")
-                btn_del.setStyleSheet("color: #ff5252;")
+                btn_del.setStyleSheet(self._row_button_danger_style)
                 btn_del.clicked.connect(lambda checked, eid=emu_id: self.remove_emulator(eid))
                 row_layout.addWidget(btn_del)
             else:
-                btn_path = QPushButton("Path")
+                btn_path = QPushButton("Browse...")
+                btn_path.setStyleSheet(self._row_button_style)
                 btn_path.clicked.connect(lambda checked, eid=emu_id: self.edit_emulator_path(eid))
                 row_layout.addWidget(btn_path)
-                btn_latest = QPushButton("⬇️ Latest")
-                btn_latest.clicked.connect(lambda checked, n=name: self.main_window.dl_emu(n))
+                btn_latest = QPushButton("Check for updates")
+                btn_latest.setStyleSheet(self._row_button_style)
+                btn_latest.clicked.connect(lambda checked, eid=emu_id: self.main_window.dl_emu(eid))
                 row_layout.addWidget(btn_latest)
                 btn_fw = QPushButton("📂 Firmware")
+                btn_fw.setStyleSheet(self._row_button_style)
                 btn_fw.clicked.connect(lambda checked, n=name: self.main_window.open_fw(n))
                 row_layout.addWidget(btn_fw)
 

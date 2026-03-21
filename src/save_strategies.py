@@ -980,7 +980,9 @@ class WindowsNativeStrategy(SaveStrategy):
         p = Path(save_dir)
         if not p.exists():
             return []
-        return [f for f in p.rglob("*") if f.is_file()]
+        if p.is_dir():
+            return [p]
+        return [p]
     
     def restore_save_files(self, rom: dict, save_data: bytes, filename: str) -> bool:
         from src import windows_saves

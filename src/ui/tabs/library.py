@@ -119,6 +119,8 @@ class GameCard(QWidget):
         self.img_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.img_label)
 
+        self._apply_pixmap_retries = 0
+
         # State Indicators
         rom_exists = game.get('_local_exists', False)
 
@@ -154,6 +156,7 @@ class GameCard(QWidget):
             self.cloud_indicator.show()
 
         self.title_label = QLabel()
+        self.title_label.setFixedHeight(30)
         self.title_label.setAlignment(Qt.AlignCenter)
         self.title_label.setStyleSheet("color: white; font-weight: bold; border: none;")
         self.title_label.setWordWrap(False)
@@ -171,7 +174,9 @@ class GameCard(QWidget):
         layout.addWidget(self.title_label)
         self.disc_label = None
         self.fetcher = None
+        self._full_image = None
         self._full_pixmap = None
+        self._scaled_pixmap_cache = {}
 
         # Listen to registry for downloads/extractions
         download_registry.add_listener(str(self.game['id']), self.on_registry_update)
@@ -242,45 +247,87 @@ class GameCard(QWidget):
     def start_image_fetch(self, main_window, generation):
         url = self.client.get_cover_url(self.game)
         if not url:
-            # Render a simple local placeholder — no network fetch needed
-            from PySide6.QtGui import QPainter, QFont
-            from PySide6.QtCore import QRect
             w = self.img_label.width() or 150
             h = self.img_label.height() or 200
             pixmap = QPixmap(w, h)
             pixmap.fill(QColor("#2a2a3e"))
-            painter = QPainter(pixmap)
-            painter.setPen(QColor("#8888aa"))
-            painter.setFont(QFont("Arial", 11))
-            painter.drawText(QRect(0, 0, w, h), Qt.AlignCenter, "No Cover")
-            painter.end()
+            self._full_pixmap = pixmap
+            try:
+                self._scaled_pixmap_cache.clear()
+            except Exception:
+                pass
             self.img_label.setPixmap(pixmap)
             return None
         self.fetcher = ImageFetcher(self.game['id'], url)
+        fetcher = self.fetcher
         self.fetcher.finished.connect(self.set_image)
-        self.fetcher.finished.connect(lambda gid, pix: main_window._on_image_fetched(self.fetcher, generation))
+        self.fetcher.finished.connect(lambda gid, img, f=fetcher: main_window._on_image_fetched(f, generation))
         self.fetcher.start()
         return self.fetcher
 
-    def set_image(self, game_id, pixmap):
+    def set_image(self, game_id, image):
         try:
-            self._full_pixmap = pixmap
+            if (not image) or image.isNull():
+                w = self.img_label.width() or 150
+                h = self.img_label.height() or 200
+                ph = QPixmap(w, h)
+                ph.fill(QColor("#2a2a3e"))
+                self._full_image = None
+                self._full_pixmap = ph
+                self._scaled_pixmap_cache.clear()
+                self.img_label.setPixmap(ph)
+            else:
+                self._full_image = image
+                self._full_pixmap = None
+                self._scaled_pixmap_cache.clear()
+                self._apply_pixmap_retries = 0
+                p = self.parent()
+                while p and not isinstance(p, LibraryTab):
+                    p = p.parent()
+                if p:
+                    p._enqueue_cover_apply(self)
+                else:
+                    self._apply_full_pixmap_to_label()
+        except Exception:
+            return
+
+    def _apply_full_pixmap_to_label(self):
+        try:
+            pm = getattr(self, "_full_pixmap", None)
+            if (not pm) or pm.isNull():
+                img = getattr(self, "_full_image", None)
+                if img and (not img.isNull()):
+                    try:
+                        pm = QPixmap.fromImage(img)
+                        self._full_pixmap = pm
+                    except Exception:
+                        return
+                else:
+                    return
+
             w = self.img_label.width()
             h = self.img_label.height()
-            if w > 0 and h > 0:
-                self.img_label.setPixmap(
-                    pixmap.scaled(w, h,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation)
-                )
+            if w <= 0 or h <= 0:
+                self._apply_pixmap_retries = getattr(self, "_apply_pixmap_retries", 0) + 1
+                if self._apply_pixmap_retries <= 5:
+                    QTimer.singleShot(0, self._apply_full_pixmap_to_label)
+                return
 
-            p = self.parent()
-            while p and not isinstance(p, LibraryTab):
-                p = p.parent()
-            if p:
-                QTimer.singleShot(0, p._resize_all_cards)
-        except RuntimeError:
-            pass
+            key = (w, h)
+            cached = self._scaled_pixmap_cache.get(key)
+            if cached is None:
+                if pm.width() == w and pm.height() == h:
+                    cached = pm
+                else:
+                    cached = pm.scaled(
+                        w, h,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                self._scaled_pixmap_cache[key] = cached
+            self.img_label.setPixmap(cached)
+        except Exception:
+            return
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -304,11 +351,18 @@ class LibraryTab(QWidget):
         self._loading_label = None
         self._pending_games = []    # games not yet rendered
         self._load_more_label = None  # "Load more..." indicator at bottom  
-        self.LOAD_BATCH = 200
+        self.LOAD_BATCH = 100
         self._is_loading_batch = False  # guard against concurrent loads    
         self._total_server_games = 0
         self._loaded_count = 0
         self._selected_index = -1
+
+        self._cover_apply_queue = []
+        self._cover_apply_pending = set()
+        self._cover_apply_timer = QTimer(self)
+        self._cover_apply_timer.setSingleShot(True)
+        self._cover_apply_timer.setInterval(0)
+        self._cover_apply_timer.timeout.connect(self._process_cover_apply_queue)
 
         self._scroll_debounce = QTimer()
         self._scroll_debounce.setSingleShot(True)
@@ -619,13 +673,19 @@ class LibraryTab(QWidget):
                 card.setFixedSize(w, img_h + title_h)
                 card.img_label.setFixedSize(img_w, img_h)
                 if card._full_pixmap and not card._full_pixmap.isNull():
-                    card.img_label.setPixmap(
-                        card._full_pixmap.scaled(
+                    key = (img_w, img_h)
+                    cached = getattr(card, "_scaled_pixmap_cache", {}).get(key)
+                    if cached is None:
+                        cached = card._full_pixmap.scaled(
                             img_w, img_h,
                             Qt.KeepAspectRatio,
                             Qt.SmoothTransformation
                         )
-                    )
+                        try:
+                            card._scaled_pixmap_cache[key] = cached
+                        except Exception:
+                            pass
+                    card.img_label.setPixmap(cached)
                 card.title_label.setFixedWidth(w - 10)
         finally:
             self.grid_widget.setUpdatesEnabled(True)
@@ -662,7 +722,6 @@ class LibraryTab(QWidget):
         if max_val <= 0 or value < max_val * 0.60:
             return
 
-        print(f"[Library] Threshold hit — loading next batch. Pending: {len(self._pending_games)}")
         self._is_loading_batch = True
         self._render_next_batch()
 
@@ -680,14 +739,14 @@ class LibraryTab(QWidget):
         # BUG FIX: Stop any pending scroll loads before starting a new filter
         self._scroll_debounce.stop()
         self._is_loading_batch = False
+
         self._filter_generation += 1
         my_filter_gen = self._filter_generation
 
         text = self.search_input.text().lower()
         platform = getattr(self, "_platform_selection", None) or self.platform_filter.currentText() or "All Platforms"
-        self._selected_index = -1 # Reset selection on filter
+        self._selected_index = -1
 
-        # build base filtered list by text/platform
         if platform == "⚠️ No Emulator":
             all_known = set(RETROARCH_PLATFORMS)
             for emu in emulators.load_emulators():
@@ -710,22 +769,21 @@ class LibraryTab(QWidget):
                      or g.get('platform_slug') == platform)
             ]
 
-        # Apply installation status filter
         filtered = []
         for g in base_filtered:
             is_installed = g.get('_local_exists', False) or download_registry.get(str(g.get('id'))) is not None
-            
+
             if self.current_install_filter == "installed":
-                if is_installed: filtered.append(g)
+                if is_installed:
+                    filtered.append(g)
             elif self.current_install_filter == "not_installed":
-                if not is_installed: filtered.append(g)
+                if not is_installed:
+                    filtered.append(g)
             else:
                 filtered.append(g)
 
-        # Always sort alphabetically by game name — handle potential None/empty names
         filtered.sort(key=lambda g: str(g.get('name', '') or g.get('fs_name', '')).lower())
 
-        # RACE CONDITION GUARD: If a newer filter started while we were sorting, bail
         if my_filter_gen != self._filter_generation:
             return
 
@@ -734,10 +792,6 @@ class LibraryTab(QWidget):
             self._current_platform != platform
         )
 
-        # Only reflow existing widgets if ALL games for this platform view have
-        # been rendered already. If there are pending games, a show/hide pass
-        # cannot include items that haven't had cards created yet, which makes
-        # Installed/Not Installed (and search) incomplete.
         grid_ids = getattr(self, "_grid_game_ids", None)
         filtered_ids_set = set(g.get('id') for g in filtered)
         can_reflow = (
@@ -749,12 +803,10 @@ class LibraryTab(QWidget):
         )
 
         if can_reflow:
-            # Same platform — just show/hide existing cards and REFLOW them
             self.grid_widget.setUpdatesEnabled(False)
             try:
                 visible_cards = []
-                
-                # 1. Update visibility and collect visible cards
+
                 for card in self._all_cards:
                     try:
                         visible = card.game.get('id') in filtered_ids_set
@@ -764,8 +816,7 @@ class LibraryTab(QWidget):
                             visible_cards.append(card)
                     except (RuntimeError, AttributeError):
                         continue
-                
-                # 2. Clear current layout positions (without deleting widgets)
+
                 while self.grid_layout.count():
                     item = self.grid_layout.takeAt(0)
                     if item and item.widget() and not isinstance(item.widget(), GameCard):
@@ -774,31 +825,64 @@ class LibraryTab(QWidget):
                             item.widget().deleteLater()
                         except (RuntimeError, AttributeError):
                             pass
-                
-                # 3. Re-add only visible ones in order
+
                 _, cols = self._get_card_size()
                 for idx, card in enumerate(visible_cards):
-                    # RACE CONDITION GUARD
-                    if my_filter_gen != self._filter_generation: return
-                    
+                    if my_filter_gen != self._filter_generation:
+                        return
+
                     row = idx // cols
                     col = idx % cols
                     try:
                         self.grid_layout.addWidget(card, row, col)
                     except (RuntimeError, AttributeError):
                         continue
-                
-                # 4. Handle "No games match" case
+
                 if not visible_cards:
                     self.show_empty_message("No games match your search.")
 
             finally:
                 self.grid_widget.setUpdatesEnabled(True)
         else:
-            # Platform changed — rebuild grid
             self.populate_grid(filtered)
 
-        print(f"[Library] Filter → {len(filtered)} games (platform='{platform}' search='{text}')")
+    def _enqueue_cover_apply(self, card):
+        try:
+            gid = None
+            try:
+                gid = int(card.game.get('id'))
+            except Exception:
+                gid = id(card)
+            if gid in self._cover_apply_pending:
+                return
+            self._cover_apply_pending.add(gid)
+            self._cover_apply_queue.append((gid, card))
+            if not self._cover_apply_timer.isActive():
+                self._cover_apply_timer.start()
+        except Exception:
+            return
+
+    def _process_cover_apply_queue(self):
+        try:
+            budget = 8
+            while budget > 0 and self._cover_apply_queue:
+                gid, card = self._cover_apply_queue.pop(0)
+                try:
+                    self._cover_apply_pending.discard(gid)
+                except Exception:
+                    pass
+                try:
+                    if card and card.isVisible():
+                        card._apply_full_pixmap_to_label()
+                except Exception:
+                    pass
+                budget -= 1
+        finally:
+            if self._cover_apply_queue:
+                try:
+                    self._cover_apply_timer.start()
+                except Exception:
+                    pass
 
     def update_game_local_status(self, game_id, exists):
         """Dynamically updates a GameCard's checkmark status."""
@@ -852,6 +936,13 @@ class LibraryTab(QWidget):
         self.main_window.active_image_fetchers = []
         self.main_window.image_fetch_queue = []
 
+        # Start a new cover-fetch generation for this grid rebuild. This is used
+        # to ignore in-flight fetch completions from the previous grid.
+        try:
+            self.main_window.fetch_generation += 1
+        except Exception:
+            pass
+
         self._all_cards = []
         self._pending_games = list(games)  # full list, render in batches   
         self._scroll_debounce.stop()  # cancel any pending debounce on grid reset
@@ -895,7 +986,6 @@ class LibraryTab(QWidget):
         if max_val <= 0 or value < max_val * 0.60:
             return
 
-        print(f"[Library] Threshold hit — loading next batch. Pending: {len(self._pending_games)}")
         self._is_loading_batch = True
         self._render_next_batch(my_gen, my_filter_gen)
 
@@ -942,12 +1032,15 @@ class LibraryTab(QWidget):
 
         card_w, cols_per_row = self._get_card_size()
 
+        max_concurrent = 6
+
         self.grid_widget.setUpdatesEnabled(False)
         try:
             # Calculate starting row/col from existing card count
             total_so_far = len(self._all_cards)
             row = total_so_far // cols_per_row
             col = total_so_far % cols_per_row
+            start_idx = len(self._all_cards)
 
             for i, game in enumerate(batch):
                 # RACE CONDITION GUARD
@@ -978,22 +1071,15 @@ class LibraryTab(QWidget):
         finally:
             self.grid_widget.setUpdatesEnabled(True)
 
-        print(f"[Library] Cards: {len(self._all_cards)} loaded, {len(self._pending_games)} pending")
-
-        # Queue image fetches for newly added cards (first 12 overall only) 
-        self.main_window.fetch_generation += 1
         my_fetch_gen = self.main_window.fetch_generation
-        start_idx = len(self._all_cards) - len(batch)
-        for i, card in enumerate(self._all_cards[start_idx:]):
-            # RACE CONDITION GUARD
+        for j, card in enumerate(self._all_cards[start_idx:]):
             if generation != self._render_generation or filter_generation != self._filter_generation:
                 break
-                
-            abs_idx = start_idx + i
-            if abs_idx < 12:
+
+            abs_idx = start_idx + j
+            if abs_idx < max_concurrent:
                 try:
-                    fetcher = card.start_image_fetch(
-                        self.main_window, my_fetch_gen)
+                    fetcher = card.start_image_fetch(self.main_window, my_fetch_gen)
                     if fetcher:
                         self.main_window.active_image_fetchers.append(fetcher)
                 except (RuntimeError, AttributeError):
@@ -1001,22 +1087,33 @@ class LibraryTab(QWidget):
             else:
                 self.main_window.image_fetch_queue.append(card)
 
-        # If more games remain, add a load-more indicator at the bottom     
+        try:
+            while (len(self.main_window.active_image_fetchers) < max_concurrent
+                   and self.main_window.image_fetch_queue):
+                next_card = self.main_window.image_fetch_queue.pop(0)
+                try:
+                    new_fetcher = next_card.start_image_fetch(self.main_window, my_fetch_gen)
+                    if new_fetcher:
+                        self.main_window.active_image_fetchers.append(new_fetcher)
+                except (RuntimeError, AttributeError):
+                    continue
+        except Exception:
+            pass
+
         if self._pending_games:
-            # RACE CONDITION GUARD
             if generation != self._render_generation or filter_generation != self._filter_generation:
                 self._is_loading_batch = False
                 return
 
             remaining = len(self._pending_games)
-            self._load_more_label = QLabel(f"⬇ Scroll down to load {remaining} more games...")       
+            self._load_more_label = QLabel(f"⬇ Scroll down to load {remaining} more games...")
             self._load_more_label.setAlignment(Qt.AlignCenter)
             self._load_more_label.setStyleSheet(
                 "color: #1e88e5; font-size: 13px; "
                 "padding: 20px; background: #1a1a1a;")
             next_row = (len(self._all_cards) + cols_per_row - 1) // cols_per_row
             self.grid_layout.addWidget(
-                self._load_more_label, next_row, 0, 1, cols_per_row)        
+                self._load_more_label, next_row, 0, 1, cols_per_row)
 
         self._is_loading_batch = False
 

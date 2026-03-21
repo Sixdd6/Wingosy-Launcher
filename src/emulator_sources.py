@@ -7,97 +7,79 @@ EMULATOR_SOURCES = {
     "retroarch": {
         "type": "direct",
         "label": "RetroArch (Stable)",
-        "url": "https://buildbot.libretro.com/stable/1.22.2/windows/x86_64/RetroArch_update.7z",
+        "url": "https://buildbot.libretro.com/stable",
         "exe_hint": "retroarch.exe"
     },
     "eden": {
-        "type": "github",
-        "repo": "eden-emulator/Releases",
-        "asset_filters": {
-            "required": ["windows", "msvc"],
-            "excluded": ["arm64", "macos", "android", "source", "mingw"]
-        },
+        "type": "direct",
+        "label": "Eden",
+        "url": "https://git.eden-emu.dev/eden-emu/eden/releases",
         "exe_hint": "eden.exe"
     },
     "rpcs3": {
-        "type": "github",
-        "repo": "RPCS3/rpcs3",
-        "asset_filters": {
-            "required": ["win64"],
-            "excluded": ["debug"]
-        },
+        "type": "direct",
+        "label": "RPCS3",
+        "url": "https://rpcs3.net/download",
         "exe_hint": "rpcs3.exe"
     },
     "dolphin": {
-        "type": "dolphin_api",
+        "type": "direct",
+        "label": "Dolphin",
+        "url": "https://dolphin-emu.org/download",
         "exe_hint": "Dolphin.exe"
     },
     "pcsx2": {
-        "type": "github",
-        "repo": "PCSX2/pcsx2",
-        "asset_filters": {
-            "required": ["windows", "Qt"],
-            "excluded": ["debug", "sse4", "arm64"]
-        },
+        "type": "direct",
+        "label": "PCSX2",
+        "url": "https://pcsx2.net/downloads",
         "exe_hint": "pcsx2-qt.exe"
     },
     "cemu": {
-        "type": "github",
-        "repo": "cemu-project/Cemu",
-        "asset_filters": {
-            "required": ["windows"],
-            "excluded": ["experimental", "debug"]
-        },
+        "type": "direct",
+        "label": "Cemu",
+        "url": "https://cemu.info/#download",
         "exe_hint": "Cemu.exe"
     },
     "azahar": {
-        "type": "github",
-        "repo": "azahar-emu/azahar",
-        "asset_filters": {
-            "required": ["windows", "msys2"],
-            "excluded": ["debug", "appimage"]
-        },
+        "type": "direct",
+        "label": "Azahar",
+        "url": "https://github.com/azahar-emu/azahar/releases/latest",
         "exe_hint": "azahar.exe"
     },
     "xemu": {
-        "type": "github",
-        "repo": "xemu-project/xemu",
-        "asset_filters": {
-            "required": ["win", "x86_64", "release"],
-            "excluded": ["dbg", "pdb", "arm", "macos", "appimage", "tar"]
-        },
+        "type": "direct",
+        "label": "xemu",
+        "url": "https://github.com/xemu-project/xemu/releases/latest",
         "exe_hint": "xemu.exe"
     },
     "xenia_canary": {
-        "type": "github",
-        "repo": "xenia-canary/xenia-canary",
-        "asset_filters": {
-            "required": ["windows"],
-            "excluded": ["debugoptimized", "debug", "pdb"]
-        },
+        "type": "direct",
+        "label": "xenia-canary",
+        "url": "https://github.com/xenia-canary/xenia-canary-releases/releases/canary_experimental",
         "exe_hint": "xenia_canary.exe"
     },
-    "xenia": {
-        "type": "direct",
-        "url": "https://github.com/xenia-project/release-builds-windows/releases/latest/download/xenia_master.zip",
-        "exe_hint": "xenia.exe"
-    },
     "duckstation": {
-        "type": "github",
-        "repo": "stenzek/duckstation",
-        "asset_filters": {
-            "required": ["windows", "x64"],
-            "excluded": ["nogui", "debug", "arm64"]
-        },
+        "type": "direct",
+        "label": "Duckstation",
+        "url": "https://github.com/stenzek/duckstation/releases/latest",
         "exe_hint": "duckstation-qt-x64-ReleaseLTCG.exe"
     },
     "melonds": {
-        "type": "github",
-        "repo": "melonDS-emu/melonDS",
-        "asset_filters": {
-            "required": ["windows", "x86_64"],
-            "excluded": ["aarch64", "macos", "ubuntu", "appimage", "freebsd", "netbsd", "openbsd"]
-        },
+        "type": "direct",
+        "label": "melonDS",
+        "url": "https://github.com/melonDS-emu/melonDS/releases/latest",
         "exe_hint": "melonDS.exe"
+    },
+    "shadps4": {
+        "type": "direct",
+        "label": "ShadPS4",
+        "url": "https://github.com/shadps4-emu/shadPS4/releases/latest",
+        "exe_hint": "shadps4.exe"
+    },
+    "redream": {
+        "type": "direct",
+        "label": "ReDream",
+        "url": "https://redream.io/download",
+        "exe_hint": "redream.exe"
     }
 }

@@ -54,14 +54,123 @@ logging.info(f"executable={sys.executable}")
 logging.info(f"argv={sys.argv}")
 logging.info(f"cwd={os.getcwd()}")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
-from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel, QProgressBar
+from PySide6.QtCore import QTimer, QThread, Signal, Slot, Qt
 from src.config import ConfigManager
 from src.api import RomMClient
 from src.watcher import WingosyWatcher
 from src.ui import WingosyMainWindow, SetupDialog
 
 VERSION = "0.6.5"
+
+
+class LoadingDialog(QDialog):
+    def __init__(self):
+        super().__init__(None)
+        self.setWindowTitle("Wingosy Launcher")
+        self.setFixedSize(420, 140)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setModal(False)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        self.title = QLabel("Wingosy Launcher")
+        self.title.setStyleSheet("font-size: 18px; font-weight: 600; color: #ffffff;")
+        layout.addWidget(self.title)
+
+        self.status = QLabel("Starting...")
+        self.status.setStyleSheet("font-size: 12px; color: #cccccc;")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(10)
+        self.progress.setStyleSheet(
+            "QProgressBar { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 5px; }"
+            "QProgressBar::chunk { background: #0d6efd; border-radius: 5px; }"
+        )
+        layout.addWidget(self.progress)
+
+        self.setStyleSheet("QDialog { background: #1a1a1a; border: 1px solid #333333; border-radius: 10px; }")
+
+    def set_status(self, text: str, pct: int | None = None):
+        self.status.setText(text)
+        if pct is not None:
+            try:
+                self.progress.setValue(int(pct))
+            except Exception:
+                pass
+
+
+class StartupWorker(QThread):
+    progress = Signal(int, str)  # pct, status
+    need_setup = Signal()
+    error = Signal(str)
+    ready = Signal(object, object)  # config, client
+
+    def __init__(self, host: str | None = None, username: str | None = None, password: str | None = None):
+        super().__init__()
+        self.host = host
+        self.username = username
+        self.password = password
+
+    def run(self):
+        try:
+            self.progress.emit(5, "Loading configuration...")
+            config = ConfigManager()
+
+            self.progress.emit(15, "Checking configuration migrations...")
+            from src.emulators import migrate_old_config
+            migrate_old_config(config)
+
+            self.progress.emit(25, "Applying logging settings...")
+            log_level_str = config.get("log_level", "INFO").upper()
+            log_level = getattr(logging, log_level_str, logging.INFO)
+            logging.getLogger().setLevel(log_level)
+
+            if self.host is not None:
+                config.set("host", (self.host or "").rstrip('/'))
+            if self.username is not None:
+                config.set("username", self.username)
+
+            self.progress.emit(35, "Connecting...")
+            client = RomMClient(config.get("host"), config=config)
+
+            success = False
+            self.progress.emit(55, "Verifying session...")
+            if client.token:
+                try:
+                    if client.fetch_library():
+                        success = True
+                except Exception:
+                    success = False
+
+            if not success:
+                self.progress.emit(70, "Authenticating...")
+                password = self.password
+                if password is None:
+                    password = config.get("password")
+
+                if password:
+                    ok, _result = client.login(config.get("username"), password)
+                    if ok:
+                        config.set("password", None)
+                        success = True
+
+            if not success:
+                self.progress.emit(80, "Setup required...")
+                self.need_setup.emit()
+                return
+
+            self.progress.emit(100, "Starting...")
+            self.ready.emit(config, client)
+        except Exception as e:
+            self.error.emit(str(e))
 
 def _cleanup_old_mei_folders():
     """Delete stale PyInstaller _MEI temp folders from previous runs."""
@@ -124,61 +233,98 @@ def main():
             background: #1f1f1f;
         }
     """)
-    
-    config = ConfigManager()
-    
-    # Migrate emulator paths to new emulators.json schema if needed
-    from src.emulators import migrate_old_config
-    migrate_old_config(config)
-    
-    # Set log level from config
-    log_level_str = config.get("log_level", "INFO").upper()
-    log_level = getattr(logging, log_level_str, logging.INFO)
-    logging.getLogger().setLevel(log_level)
-    logging.info(f"Log level set to {log_level_str}")
-    
-    # Attempt login with token first if available (loaded from keyring by client)
-    client = RomMClient(config.get("host"), config=config)
-    
-    success = False
-    if client.token:
-        # Verify token by fetching library
-        if client.fetch_library():
-            success = True
-    
-    if not success:
-        # Try login with password if available (legacy or fresh setup)
-        password = config.get("password")
-        if password:
-            success, result = client.login(config.get("username"), password)
-            if success:
-                # Discard password now that we have a token
-                config.set("password", None)
-            else:
-                QMessageBox.warning(None, "Login Failed", f"Stored credentials failed: {result}")
-        
-    if not success:
-        # Force SetupDialog
-        setup = SetupDialog(config)
-        if setup.exec() == SetupDialog.Accepted:
-            data = setup.get_data()
-            config.set("host", data["host"])
-            config.set("username", data["username"])
-            # Attempt login with new credentials
-            client = RomMClient(data["host"], config=config)
-            success, result = client.login(data["username"], data["password"])
-            if not success:
-                QMessageBox.critical(None, "Login Failed", result)
-                sys.exit(1)
-        else:
-            sys.exit(0)
 
-    window = WingosyMainWindow(config, client, WingosyWatcher, VERSION)
-    try:
-        app.aboutToQuit.connect(window._shutdown_threads)
-    except Exception:
-        pass
-    window.show()
+    splash = LoadingDialog()
+    splash.show()
+    app.processEvents()
+
+    state = {"worker": None, "window": None}
+
+    def _start_worker(host=None, username=None, password=None):
+        if state.get("worker") and state["worker"].isRunning():
+            try:
+                state["worker"].requestInterruption()
+            except Exception:
+                pass
+        worker = StartupWorker(host=host, username=username, password=password)
+        state["worker"] = worker
+        worker.progress.connect(lambda pct, msg: splash.set_status(msg, pct))
+
+        def _on_error(msg: str):
+            try:
+                splash.close()
+            except Exception:
+                pass
+            QMessageBox.critical(None, "Startup Error", msg)
+            sys.exit(1)
+
+        def _on_need_setup():
+            splash.hide()
+            config = ConfigManager()
+            setup = SetupDialog(config)
+            if setup.exec() == SetupDialog.Accepted:
+                data = setup.get_data()
+                splash.show()
+                app.processEvents()
+                _start_worker(host=data["host"], username=data["username"], password=data["password"])
+            else:
+                sys.exit(0)
+
+        def _on_ready(config, client):
+            window = WingosyMainWindow(config, client, WingosyWatcher, VERSION)
+            state["window"] = window
+            try:
+                app.aboutToQuit.connect(window._shutdown_threads)
+            except Exception:
+                pass
+            splash.set_status("Building library view...", 95)
+
+            gate = {"constructed": False, "library_ok": None}
+
+            def _try_show_main_window():
+                if not gate["constructed"]:
+                    return
+                if gate["library_ok"] is None:
+                    return
+                try:
+                    splash.close()
+                except Exception:
+                    pass
+                window.show()
+                if gate["library_ok"] is False:
+                    QMessageBox.warning(
+                        window,
+                        "Library Load Failed",
+                        "Could not load your library from the server.\n\n"
+                        "Check your server settings and try again."
+                    )
+
+            def _on_constructed():
+                gate["constructed"] = True
+                _try_show_main_window()
+
+            def _on_library_ready(ok: bool):
+                gate["library_ok"] = bool(ok)
+                _try_show_main_window()
+
+            try:
+                window.startup_ready.connect(_on_constructed)
+            except Exception:
+                gate["constructed"] = True
+
+            try:
+                window.initial_library_ready.connect(_on_library_ready)
+            except Exception:
+                gate["library_ok"] = True
+
+            _try_show_main_window()
+
+        worker.error.connect(_on_error)
+        worker.need_setup.connect(_on_need_setup)
+        worker.ready.connect(_on_ready)
+        worker.start()
+
+    _start_worker()
     
     # Delay MEI cleanup to ensure certifi bundle is loaded
     QTimer.singleShot(30000, _cleanup_old_mei_folders)

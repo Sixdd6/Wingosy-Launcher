@@ -139,6 +139,26 @@ class TestConfig:
                 f"Config missing required key: {key}")
 
 
+# ── Windows Save Sync ─────────────────────────────────────────────────────
+
+class TestWindowsNativeStrategy:
+    def test_returns_folder_for_configured_save_dir(self, tmp_path, monkeypatch):
+        from src.save_strategies import WindowsNativeStrategy
+
+        save_root = tmp_path / "MyGameSaves"
+        save_root.mkdir(parents=True, exist_ok=True)
+        (save_root / "slot1.dat").write_bytes(b"abc")
+
+        # windows_saves.get_save_dir is what WindowsNativeStrategy consults
+        import src.windows_saves as windows_saves
+        monkeypatch.setattr(windows_saves, "get_save_dir", lambda rom_id: str(save_root))
+
+        s = WindowsNativeStrategy(config={}, emulator={"id": "windows_native", "is_native": True})
+        files = s.get_save_files({"id": 123, "name": "Test"})
+
+        assert files == [save_root]
+
+
 # ── Dummy Client ──────────────────────────────────────────────────────────
 
 class TestDummyClient:

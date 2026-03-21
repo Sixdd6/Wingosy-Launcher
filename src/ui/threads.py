@@ -7,6 +7,7 @@ import subprocess
 import time
 import logging
 import re
+import hashlib
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QPixmap, QImage
@@ -84,21 +85,91 @@ class LocalDiscoveryWorker(QThread):
         self.finished_discovery.emit()
 
 class ImageFetcher(QThread):
-    finished = Signal(int, QPixmap)
+    finished = Signal(int, QImage)
     def __init__(self, game_id, url):
         super().__init__()
         self.game_id = game_id
         self.url = url
     def run(self):
         try:
-            verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
-            r = requests.get(self.url, timeout=15, verify=verify)
-            if r.status_code == 200:
-                img = QImage()
-                if img.loadFromData(r.content):
-                    self.finished.emit(self.game_id, QPixmap.fromImage(img))
+            if self.isInterruptionRequested():
+                self.finished.emit(self.game_id, QImage())
+                return
+
+            cache_dir = Path.home() / ".wingosy" / "cover_cache"
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                cache_dir = None
+
+            cache_path = None
+            if cache_dir is not None:
+                h = hashlib.sha1(self.url.encode("utf-8", errors="ignore")).hexdigest()
+                cache_path = cache_dir / f"{h}.bin"
+
+            data = None
+            loaded_from_cache = False
+            if cache_path is not None:
+                try:
+                    if cache_path.exists() and cache_path.stat().st_size > 0:
+                        data = cache_path.read_bytes()
+                        loaded_from_cache = True
+                except Exception:
+                    data = None
+
+            if data is None:
+                verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
+                session = getattr(ImageFetcher, "_session", None)
+                if session is None:
+                    session = requests.Session()
+                    try:
+                        from requests.adapters import HTTPAdapter
+                        adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32)
+                        session.mount("http://", adapter)
+                        session.mount("https://", adapter)
+                    except Exception:
+                        pass
+                    ImageFetcher._session = session
+                r = session.get(self.url, timeout=15, verify=verify)
+                if r.status_code != 200:
+                    self.finished.emit(self.game_id, QImage())
+                    return
+                data = r.content
+                if cache_path is not None and data:
+                    try:
+                        tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
+                        try:
+                            tmp.write_bytes(data)
+                            os.replace(tmp, cache_path)
+                        finally:
+                            try:
+                                if tmp.exists():
+                                    tmp.unlink()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+            if self.isInterruptionRequested():
+                self.finished.emit(self.game_id, QImage())
+                return
+
+            img = QImage()
+            if img.loadFromData(data):
+                self.finished.emit(self.game_id, img)
+            else:
+                # If the cache entry is corrupt, delete it so next attempt re-downloads
+                if loaded_from_cache and cache_path is not None:
+                    try:
+                        cache_path.unlink()
+                    except Exception:
+                        pass
+                self.finished.emit(self.game_id, QImage())
         except Exception:
-            pass
+            try:
+                self.finished.emit(self.game_id, QImage())
+            except Exception:
+                pass
 
 class GameDescriptionFetcher(QThread):
     finished = Signal(str)
