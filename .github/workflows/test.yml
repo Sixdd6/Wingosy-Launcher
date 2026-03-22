@@ -30,27 +30,7 @@ jobs:
           pip install --upgrade --upgrade-strategy eager -r requirements.txt
           pip check
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y libgl1
-          sudo apt-get install -y libglib2.0-0
-          sudo apt-get install -y xvfb
-          sudo apt-get install -y libegl1
-          sudo apt-get install -y libxkbcommon-x11-0
-          sudo apt-get install -y libdbus-1-3
-          sudo apt-get install -y libxcb-cursor0
-
-      - name: Run tests (Linux)
-        if: runner.os == 'Linux'
-        run: python -m pytest tests/ -v --tb=short
-        env:
-          QT_QPA_PLATFORM: offscreen
-          DISPLAY: ":99"
-
-      - name: Run tests (non-Linux)
-        if: runner.os != 'Linux'
+      - name: Run tests
         run: python -m pytest tests/ -v --tb=short
         env:
           QT_QPA_PLATFORM: offscreen
