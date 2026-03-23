@@ -7,6 +7,7 @@ import pytest
 import sys
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -157,6 +158,37 @@ class TestWindowsNativeStrategy:
         files = s.get_save_files({"id": 123, "name": "Test"})
 
         assert files == [save_root]
+
+
+class TestResolveLocalRomPathWindows:
+    def test_windows_prefers_base_rom_windows_subdir(self, tmp_path):
+        from src.utils import resolve_local_rom_path
+
+        game = {
+            "platform_slug": "windows",
+            "fs_name": "My Game.zip",
+            "files": [{"file_name": "My Game.zip"}],
+        }
+        base_rom = tmp_path / "roms"
+        extracted_dir = base_rom / "windows" / "My Game"
+        extracted_dir.mkdir(parents=True, exist_ok=True)
+
+        resolved = resolve_local_rom_path(game, {"base_rom_path": str(base_rom)})
+        assert resolved == extracted_dir
+
+    def test_windows_requires_base_rom_path(self, tmp_path):
+        from src.utils import resolve_local_rom_path
+
+        game = {
+            "platform_slug": "windows",
+            "fs_name": "Legacy Game.zip",
+            "files": [{"file_name": "Legacy Game.zip"}],
+        }
+        legacy_dir = tmp_path / "legacy_windows_games" / "Legacy Game"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+
+        resolved = resolve_local_rom_path(game, {})
+        assert resolved is None
 
 
 # ── Dummy Client ──────────────────────────────────────────────────────────

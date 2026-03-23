@@ -51,7 +51,6 @@ class ConfigManager:
         "platform_assignments": {},
         "retroarch_save_mode": "srm",
         "device_id": "wingosy-win-default",
-        "windows_games_dir": "",
         "windows_sync_enabled": True,
         "windows_conflict_behavior": "ask",
         "conflict_behavior": "ask",

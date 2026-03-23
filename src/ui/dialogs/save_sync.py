@@ -350,7 +350,9 @@ class SaveSyncSetupDialog(QWidget):
         self.loading_dlg.show()
         
         self.btn_wiki.setEnabled(False)
-        self.wiki_worker = WikiFetchWorker(self.game_name, self.config.get("windows_games_dir", ""))
+        base_rom_dir = Path(self.config.get("base_rom_path") or (Path.home() / "Games" / "ROMs"))
+        windows_games_dir = str(base_rom_dir / "windows")
+        self.wiki_worker = WikiFetchWorker(self.game_name, windows_games_dir)
         self.wiki_worker.results_ready.connect(self.on_wiki_results)
         self.wiki_worker.failed.connect(self.on_wiki_failed)
         

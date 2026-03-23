@@ -206,6 +206,10 @@ class WindowsGameSettingsDialog(QWidget):
             return p
         return None
 
+    def _get_windows_games_dir(self):
+        base_rom_dir = Path(self.config.get("base_rom_path") or (Path.home() / "Games" / "ROMs"))
+        return base_rom_dir / "windows"
+
     def _find_exes(self, folder):
         try:
             exes = []
@@ -289,7 +293,7 @@ class WindowsGameSettingsDialog(QWidget):
             
     def auto_detect_exe(self):
         rom = self.game.get('fs_name')
-        win_dir = self.config.get("windows_games_dir")
+        win_dir = str(self._get_windows_games_dir())
         if not rom or not win_dir: return
         folder = Path(win_dir) / Path(rom).stem
         if not folder.exists(): return
@@ -321,7 +325,7 @@ class WindowsGameSettingsDialog(QWidget):
         self.wiki_btn.setEnabled(False)
         self.save_status.setText("🔍 Searching PCGamingWiki...")
         
-        self.wiki_thread = WikiSearchThread(self.game.get('name'), self.config.get('windows_games_dir', ''))
+        self.wiki_thread = WikiSearchThread(self.game.get('name'), str(self._get_windows_games_dir()))
         self.wiki_thread.finished.connect(self._on_wiki_finished)
         self.wiki_thread.start()
 

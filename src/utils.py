@@ -49,7 +49,7 @@ def resolve_local_rom_path(game: dict, config_data: dict, search_index: Optional
     3. Fuzzy extension matching (.chd, .iso, .z64, etc)
     4. PS3/Folder-based fallback: base_rom_path / platform / folder_name
     5. Recursive search in base_rom_path (last resort)
-    6. Windows-specific: base_games_dir / folder_name (from filename stem)
+    6. Windows-specific: base_rom_path / windows / folder_name (from filename stem)
     """
     from pathlib import Path
     import os
@@ -67,7 +67,8 @@ def resolve_local_rom_path(game: dict, config_data: dict, search_index: Optional
     # Windows Native Logic
     is_windows = platform in ["windows", "win", "pc", "pc-windows", "windows-games", "win95", "win98"]
     if is_windows:
-        wd = config_data.get("windows_games_dir")
+        base_rom = config_data.get("base_rom_path")
+        wd = str(Path(base_rom) / "windows") if base_rom else ""
         if wd:
             candidates = []
             if file_obj_name:

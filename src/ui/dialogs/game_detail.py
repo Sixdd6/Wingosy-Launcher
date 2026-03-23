@@ -794,7 +794,8 @@ class GameDetailPanel(QWidget):
         
         # Determine target path
         if self._is_windows:
-            target_dir = Path(self.config.get("windows_games_dir"))
+            base_rom_dir = Path(self.config.get("base_rom_path") or (Path.home() / "Games" / "ROMs"))
+            target_dir = base_rom_dir / "windows"
             target_path = target_dir / file_obj['file_name']
         else:
             target_dir = Path(self.config.get("base_rom_path")) / self.game.get('platform_slug')
@@ -1980,13 +1981,12 @@ class GameDetailPanel(QWidget):
         if existing and existing.get("status") in ("downloading", "extracting"):
             return  # Already in progress, ignore click
 
-        windows_dir = self.config.get("windows_games_dir", "")
-        if self._is_windows and not windows_dir:
-            directory = QFileDialog.getExistingDirectory(self, "Select Windows Games Folder")
-            if directory:
-                self.config.set("windows_games_dir", directory)
-                windows_dir = directory
-            else:
+        if self._is_windows:
+            base_rom_dir = Path(self.config.get("base_rom_path") or (Path.home() / "Games" / "ROMs"))
+            target_dir = base_rom_dir / "windows"
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except Exception:
                 return
 
         files = self.game.get('files', [])
@@ -1997,6 +1997,10 @@ class GameDetailPanel(QWidget):
         rom_name = file_obj.get("file_name", "")
 
         # Windows-specific pre-download checks
+        windows_dir = ""
+        if self._is_windows:
+            base_rom_dir = Path(self.config.get("base_rom_path") or (Path.home() / "Games" / "ROMs"))
+            windows_dir = str(base_rom_dir / "windows")
         if self._is_windows and windows_dir:
             archive_path = Path(windows_dir) / rom_name
             extracted_dir = Path(windows_dir) / Path(rom_name).stem
@@ -2258,7 +2262,8 @@ class GameDetailPanel(QWidget):
                 if not exe_to_launch:
                     # Fallback to auto-detect logic
                     rom = self.game.get('fs_name')
-                    win_dir = self.config.get("windows_games_dir")
+                    base_rom_dir = Path(self.config.get("base_rom_path") or (Path.home() / "Games" / "ROMs"))
+                    win_dir = str(base_rom_dir / "windows")
                     if rom and win_dir:
                         folder = Path(win_dir) / Path(rom).stem
                         if folder.exists():

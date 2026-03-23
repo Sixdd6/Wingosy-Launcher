@@ -206,15 +206,15 @@ class SettingsTab(QWidget):
         
         self.scroll_layout.addWidget(card)
 
-        # ── Windows Games ─────────────────────────────────────────────
-        card, layout = self._make_section_card("Windows Games")
+        # ── ROM Library ───────────────────────────────────────────────
+        card, layout = self._make_section_card("ROM Library")
         
-        self.win_input = QLineEdit(self.config.get("windows_games_dir", ""))
-        self.win_input.setPlaceholderText("Folder where Windows games are installed")
+        self.win_input = QLineEdit(self.config.get("base_rom_path", ""))
+        self.win_input.setPlaceholderText("Base folder where ROMs are installed")
         self._apply_widget_style(self.win_input)
         self.browse_btn = self._make_action_btn("Browse")
         self.browse_btn.clicked.connect(self.browse_win)
-        layout.addWidget(self._make_row("Games Folder", self.win_input, self.browse_btn))
+        layout.addWidget(self._make_row("ROMs Folder", self.win_input, self.browse_btn))
         
         self.wiki_check = QCheckBox("Auto-suggest save locations")
         self.wiki_check.setChecked(self.config.get("pcgamingwiki_enabled", True))
@@ -322,7 +322,7 @@ class SettingsTab(QWidget):
         directory = QFileDialog.getExistingDirectory(self, "Select Folder")
         if directory:
             self.win_input.setText(directory)
-            self.config.set("windows_games_dir", directory)
+            self.config.set("base_rom_path", directory)
         
     def set_cards_per_row(self, val):
         self.config.set("cards_per_row", val)
