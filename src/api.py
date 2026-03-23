@@ -291,18 +291,20 @@ class RomMClient:
                             break
 
                     if note_meta is not None and isinstance(rom_data, dict):
-                        note_playtime = note_meta.get("playtime_seconds")
+                        rom_data["wingosy_metadata"] = note_meta
+
+                        note_playtime = note_meta.get("playtimeSeconds")
                         if note_playtime is not None:
                             try:
                                 note_playtime_int = max(0, int(note_playtime))
                             except Exception:
                                 note_playtime_int = None
                             if note_playtime_int is not None:
-                                rom_data["playtime_seconds"] = note_playtime_int
+                                rom_data["playtimeSeconds"] = note_playtime_int
 
-                        note_last_played = note_meta.get("last_played")
+                        note_last_played = note_meta.get("lastPlayed")
                         if isinstance(note_last_played, str) and note_last_played.strip():
-                            rom_data["last_played"] = note_last_played.strip()
+                            rom_data["lastPlayed"] = note_last_played.strip()
                 except Exception:
                     pass
                 logging.debug(f"ROM detail raw for {rom_id}: {json.dumps(rom_data, indent=2)}")
@@ -343,24 +345,21 @@ class RomMClient:
 
         meta = payload.get("wingosy_metadata")
         if not isinstance(meta, dict):
-            if "playtime_seconds" in payload or "last-played" in payload or "last_played" in payload:
-                meta = payload
-            else:
-                return None
+            return None
 
-        playtime_value = meta.get("playtime_seconds", 0)
+        playtime_value = meta.get("playtimeSeconds", 0)
         try:
             playtime_seconds = max(0, int(playtime_value or 0))
         except Exception:
             playtime_seconds = 0
 
-        last_played = meta.get("last-played") or meta.get("last_played")
+        last_played = meta.get("lastPlayed")
         if not isinstance(last_played, str):
             last_played = ""
 
         return {
-            "playtime_seconds": playtime_seconds,
-            "last_played": last_played,
+            "playtimeSeconds": playtime_seconds,
+            "lastPlayed": last_played,
         }
 
     def _build_wingosy_metadata_note(self, playtime_seconds, last_played_iso):
@@ -371,8 +370,8 @@ class RomMClient:
 
         return {
             "wingosy_metadata": {
-                "playtime_seconds": playtime_total,
-                "last-played": str(last_played_iso or ""),
+                "playtimeSeconds": playtime_total,
+                "lastPlayed": str(last_played_iso or ""),
             }
         }
 
@@ -481,7 +480,7 @@ class RomMClient:
                     note_meta = self._parse_wingosy_metadata_note(self._extract_note_text(note_obj))
                     if note_meta is None:
                         continue
-                    total_playtime = max(0, int(note_meta.get("playtime_seconds") or 0)) + secs
+                    total_playtime = max(0, int(note_meta.get("playtimeSeconds") or 0)) + secs
                     break
             except Exception:
                 pass

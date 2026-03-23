@@ -1373,16 +1373,13 @@ class GameDetailPanel(QWidget):
         )
         if not players_val:
             players_val = rom.get("max_players") or md.get("max_players")
-        playtime_val = (
-            rom.get("playtime_seconds") or rom.get("playtime") or rom.get("play_time") or
-            md.get("playtime_seconds") or md.get("playtime") or md.get("play_time")
-        )
-        if not playtime_val:
+        note_meta = rom.get("wingosy_metadata") if isinstance(rom.get("wingosy_metadata"), dict) else {}
+
+        playtime_val = note_meta.get("playtimeSeconds") if "playtimeSeconds" in note_meta else None
+        if playtime_val is None:
             playtime_val = self._get_cached_playtime_seconds(self.game.get("id"))
-        last_played_val = (
-            rom.get("last_played") or rom.get("last-played") or rom.get("lastPlayed") or
-            md.get("last_played") or md.get("last-played") or md.get("lastPlayed")
-        )
+
+        last_played_val = note_meta.get("lastPlayed") if "lastPlayed" in note_meta else None
 
         # Some backends return "0"/"0.0" strings for missing ratings.
         try:
