@@ -2,6 +2,7 @@ import os
 import shlex
 import subprocess
 import logging
+from functools import partial
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,   
                              QPushButton, QScrollArea, QFormLayout,
                              QLineEdit, QFileDialog,
@@ -27,6 +28,7 @@ class EmulatorSettingsDialog(QDialog):
         self.main_window = main_window
         self.config = main_window.config
         self.emulator_id = emulator_id
+        self._is_saving = False
         self.setWindowTitle("Emulator Settings")
         self.setMinimumWidth(600)
 
@@ -111,6 +113,9 @@ class EmulatorSettingsDialog(QDialog):
         self.main_window.open_fw(emu.get("name", ""))
 
     def save_and_close(self):
+        if self._is_saving:
+            return
+        self._is_saving = True
         try:
             all_emus = emulators.load_emulators()
             target = next((e for e in all_emus if e.get("id") == self.emulator_id), None)
@@ -133,6 +138,7 @@ class EmulatorSettingsDialog(QDialog):
             self.main_window.log("✅ Emulator settings saved.")
             self.accept()
         except Exception as e:
+            self._is_saving = False
             StyledMessageBox.warning(self, "Save Failed", f"Could not save emulator settings:\n{e}")
 
 class EmulatorEditDialog(QDialog):
@@ -374,7 +380,6 @@ class EmuListWidget(QWidget):
         dialog = EmulatorSettingsDialog(self.main_window, emu_id, self)
         if dialog.exec() == QDialog.Accepted:
             try:
-                self.populate_emus()
                 self.main_window.emulators_tab.refresh_all()
                 self.main_window.library_tab.apply_filters()
             except Exception as e:
@@ -483,6 +488,7 @@ class PlatformAssignWidget(QWidget):
         super().__init__()
         self.main_window = main_window
         self.config = main_window.config
+        self._rebuilding_assignments = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.addWidget(QLabel("<h2>Platform Assignments</h2>"))
@@ -497,6 +503,7 @@ class PlatformAssignWidget(QWidget):
         self.populate_assignments()
 
     def populate_assignments(self):
+        self._rebuilding_assignments = True
         for i in reversed(range(self.assign_layout.count())):
             item = self.assign_layout.itemAt(i)
             if item and item.widget(): item.widget().setParent(None)        
@@ -519,9 +526,24 @@ class PlatformAssignWidget(QWidget):
             assigned_id = assignments.get(slug)
             if assigned_id:
                 idx = combo.findData(assigned_id)
-                if idx >= 0: combo.setCurrentIndex(idx)
-            combo.currentIndexChanged.connect(lambda idx, s=slug, c=combo: self.save_assignment(s, c.itemData(idx)))
+                if idx >= 0:
+                    combo.blockSignals(True)
+                    combo.setCurrentIndex(idx)
+                    combo.blockSignals(False)
+            combo.currentIndexChanged.connect(partial(self._on_assignment_changed, slug))
             self.assign_layout.addRow(QLabel(f"<b>{slug.upper()}</b>"), combo)
+        self._rebuilding_assignments = False
+
+    def _on_assignment_changed(self, platform_slug, index):
+        if self._rebuilding_assignments or index < 0:
+            return
+        combo = self.sender()
+        if not isinstance(combo, QComboBox):
+            return
+        emu_id = combo.itemData(index)
+        if emu_id is None:
+            return
+        self.save_assignment(platform_slug, emu_id)
 
     def save_assignment(self, platform_slug, emu_id):
         all_emus = emulators.load_emulators()

@@ -193,18 +193,10 @@ class SettingsTab(QWidget):
         # ── Server Connection ──────────────────────────────────────────
         card, layout = self._make_section_card("Server Connection")
         
-        self.host_input = QLineEdit(self.config.get("host", ""))
-        self.host_input.setPlaceholderText("http://your-romm-server:8285")
-        self._apply_widget_style(self.host_input)
-        self.test_btn = self._make_action_btn("Test Connection")
-        self.test_btn.clicked.connect(self._test_host_connection)
-        layout.addWidget(self._make_row("RomM Host", self.host_input, self.test_btn))
-        
-        self.re_btn = QPushButton("✅ Apply & Restart")
-        self.re_btn.setVisible(False)
-        self.re_btn.setStyleSheet("background: #2e7d32; color: white; border-radius: 4px; padding: 5px; font-size: 11px;")
-        self.re_btn.clicked.connect(self._apply_and_restart)
-        layout.addWidget(self.re_btn)
+        self.host_display = QLineEdit(self.config.get("host", ""))
+        self.host_display.setReadOnly(True)
+        self._apply_widget_style(self.host_display)
+        layout.addWidget(self._make_row("RomM Host", self.host_display))
         
         account_val = QLabel(f"Logged in as: {self.config.get('username')}")
         account_val.setStyleSheet("color: #ffffff; font-size: 11px; border: none;")
@@ -331,35 +323,6 @@ class SettingsTab(QWidget):
         if directory:
             self.win_input.setText(directory)
             self.config.set("windows_games_dir", directory)
-            
-    def _test_host_connection(self):
-        host = self.host_input.text().strip()
-        if not host: return
-        self.test_btn.setText("Testing...")
-        self.test_btn.setEnabled(False)
-        ok, msg = self.main_window.client.test_connection(
-            host_override=host, 
-            retry_callback=lambda: self.test_btn.setText("Retrying...")
-        )
-        self.test_btn.setText("Test Connection")
-        self.test_btn.setEnabled(True)
-        if ok:
-            StyledMessageBox.information(self, "Success", f"{msg} Click Apply.")
-            self.re_btn.setVisible(True)
-        else:
-            StyledMessageBox.warning(self, "Failed", msg)
-            self.re_btn.setVisible(False)
-            
-    def _apply_and_restart(self):
-        self.config.set("host", self.host_input.text().strip())
-        self._do_restart()
-        
-    def _do_restart(self):
-        if sys.platform == "win32":
-            subprocess.Popen([sys.executable], close_fds=True, creationflags=(0x00000008 | 0x00000200), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.Popen([sys.executable], close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        sys.exit(0)
         
     def set_cards_per_row(self, val):
         self.config.set("cards_per_row", val)
