@@ -48,7 +48,7 @@ logging.basicConfig(
     ],
     force=True,
 )
-logging.info("=== Wingosy starting ===")
+logging.info("=== Rom Mate starting ===")
 logging.info(f"frozen={getattr(sys, 'frozen', False)}")
 logging.info(f"executable={sys.executable}")
 logging.info(f"argv={sys.argv}")
@@ -67,7 +67,7 @@ VERSION = "0.6.5"
 class LoadingDialog(QDialog):
     def __init__(self):
         super().__init__(None)
-        self.setWindowTitle("Wingosy Launcher")
+        self.setWindowTitle("Rom Mate")
         self.setFixedSize(420, 140)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setModal(False)
@@ -76,7 +76,7 @@ class LoadingDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(10)
 
-        self.title = QLabel("Wingosy Launcher")
+        self.title = QLabel("Rom Mate")
         self.title.setStyleSheet("font-size: 18px; font-weight: 600; color: #ffffff;")
         layout.addWidget(self.title)
 
@@ -200,8 +200,8 @@ def _cleanup_old_mei_folders():
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Wingosy Launcher - Sixdd")
-    app.setOrganizationName("Wingosy-Sixdd")
+    app.setApplicationName("Rom Mate")
+    app.setOrganizationName("RomMate")
     app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
     app.setStyleSheet("""

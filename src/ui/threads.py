@@ -557,7 +557,7 @@ class GithubDownloader(BaseDownloader):
     def run(self):
         try:
             api_url = f"https://api.github.com/repos/{self.repo}/releases/latest"
-            headers = {'User-Agent': 'WingosyLauncher'}
+            headers = {'User-Agent': 'RomMate'}
             verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
             resp_obj = requests.get(api_url, timeout=15, headers=headers, verify=verify)
             if resp_obj.status_code != 200:
@@ -721,7 +721,7 @@ class SelfUpdateThread(QThread):
         self.current_exe_path = current_exe_path
 
     def run(self):
-        temp_exe = self.current_exe_path.parent / "Wingosy_update.exe"      
+        temp_exe = self.current_exe_path.parent / "RomMate_update.exe"      
         try:
             verify = os.environ.get('REQUESTS_CA_BUNDLE', True)
             r = requests.get(self.download_url, stream=True, timeout=60, verify=verify)
@@ -736,7 +736,7 @@ class SelfUpdateThread(QThread):
                         if total > 0:
                             self.progress.emit(int((downloaded / total) * 100))
 
-            old_exe = self.current_exe_path.parent / "Wingosy_old.exe"      
+            old_exe = self.current_exe_path.parent / "RomMate_old.exe"      
             if old_exe.exists(): old_exe.unlink()
             os.rename(self.current_exe_path, old_exe)
             os.rename(temp_exe, self.current_exe_path)

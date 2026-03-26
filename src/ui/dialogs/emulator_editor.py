@@ -12,7 +12,7 @@ class ExePickerDialog(QWidget):
         
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
         self.setFixedSize(600, 450)
-        self.setWindowTitle(f"Choose Executable — {game_name} — Wingosy")
+        self.setWindowTitle(f"Choose Executable — {game_name} — Rom Mate")
         
         self.selected_exe = None
         self.setStyleSheet("""
@@ -103,7 +103,7 @@ class ExePickerDialog(QWidget):
             self.exe_selected.emit(self.selected_exe)
             self.close()
         else:
-            StyledMessageBox.warning(self, "No Selection — Wingosy", "Please select an executable.")
+            StyledMessageBox.warning(self, "No Selection — Rom Mate", "Please select an executable.")
 
 class AssetPickerDialog(QWidget):
     from PySide6.QtCore import Signal
@@ -113,7 +113,7 @@ class AssetPickerDialog(QWidget):
         super().__init__(parent)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
         self.setFixedSize(600, 450)
-        self.setWindowTitle(f"Download {emulator_name} — Wingosy")
+        self.setWindowTitle(f"Download {emulator_name} — Rom Mate")
         
         self.setStyleSheet("""
             QWidget { background-color: #1a1a1a; color: #ffffff; }

@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="gif_example.gif" alt="Wingosy in action" width="850">
+  <img src="gif_example.gif" alt="Rom Mate in action" width="850">
 </p>
 
-# Wingosy-Launcher-Sixdd
-> (A fork of) a game launcher for RomM on Windows. Browse your library, launch games, and keep saves backed up automatically.
+# Rom Mate
+> A companion app for RomM on Windows. Browse your library, launch games, and keep saves backed up automatically.
 > This fork is created utilizing AI as a coder while I handle the ideation and testing. The end goal is to learn, have fun and create something useful.
 
 ![Tests](https://github.com/Sixdd6/Wingosy-Launcher-Sixdd/actions/workflows/test.yml/badge.svg)
@@ -24,7 +24,7 @@
 
 ## Getting Started (for regular users)
 
-1. Download the latest `Wingosy.exe` from [Releases](https://github.com/Sixdd6/Wingosy-Launcher-Sixdd/releases)
+1. Download the latest `RomMate.exe` from [Releases](https://github.com/Sixdd6/Wingosy-Launcher-Sixdd/releases)
 2. Run it - no install needed
 3. Enter your RomM server URL and credentials
 4. Set emulator paths in the **Emulators** tab
@@ -61,7 +61,7 @@ python -m pytest tests/ -v
 
 ```bash
 pip install pyinstaller
-pyinstaller --noconsole --onefile --name Wingosy --icon "assets/icon.png" --add-data "assets;assets" --hidden-import sqlite3 --hidden-import src.ui --hidden-import src.ui.main_window --hidden-import src.ui.dialogs --hidden-import src.ui.threads --hidden-import src.ui.widgets --hidden-import src.ui.tabs --hidden-import src.ui.tabs.library --hidden-import src.ui.tabs.emulators main.py
+pyinstaller --noconsole --onefile --name RomMate --icon "assets/icon.png" --add-data "assets;assets" --hidden-import sqlite3 --hidden-import src.ui --hidden-import src.ui.main_window --hidden-import src.ui.dialogs --hidden-import src.ui.threads --hidden-import src.ui.widgets --hidden-import src.ui.tabs --hidden-import src.ui.tabs.library --hidden-import src.ui.tabs.emulators main.py
 ```
 
 ## License

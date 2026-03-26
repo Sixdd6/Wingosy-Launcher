@@ -7,7 +7,7 @@ from src.ui.dialogs.styled_messagebox import StyledMessageBox
 class WelcomeDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Welcome to Wingosy Launcher — Wingosy")
+        self.setWindowTitle("Welcome to Rom Mate")
         self.setFixedSize(500, 350)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
         
@@ -27,8 +27,8 @@ class WelcomeDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         
-        layout.addWidget(QLabel("<h1>Welcome to Wingosy!</h1>"))
-        info = QLabel("<p style='font-size: 12pt;'>Your setup is almost complete. Follow the tabs to get started.</p>")
+        layout.addWidget(QLabel("<h1>Welcome to Rom Mate!</h1>"))
+        info = QLabel("<p style='font-size: 12pt;'>A companion app for RomM on Windows. Your setup is almost complete. Follow the tabs to get started.</p>")
         info.setWordWrap(True)
         layout.addWidget(info)
         layout.addStretch()
@@ -58,7 +58,7 @@ class WelcomeDialog(QDialog):
 class SetupDialog(QDialog):
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Wingosy Setup — Wingosy")
+        self.setWindowTitle("Rom Mate Setup")
         self.config = config_manager
         self.setFixedSize(400, 250)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
@@ -124,7 +124,7 @@ class SetupDialog(QDialog):
         
     def validate_and_accept(self):
         if not re.match(r'^https?://.+', self.host_input.text().strip()):
-            StyledMessageBox.warning(self, "Invalid Host — Wingosy", "Enter a valid URL.")
+            StyledMessageBox.warning(self, "Invalid Host — Rom Mate", "Enter a valid URL.")
             return
         self.accept()
 

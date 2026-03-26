@@ -11,7 +11,7 @@ class ConflictDialog(QDialog):
 
     def __init__(self, title, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Save Conflict — {title} — Wingosy")
+        self.setWindowTitle(f"Save Conflict — {title} — Rom Mate")
         self.setFixedSize(450, 200)
         self.result_mode = None
 
@@ -151,7 +151,7 @@ class ConflictDialog(QDialog):
 class WikiSuggestionsDialog(QWidget):
     def __init__(self, suggestions, game_name, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Save Location Suggestions — {game_name} — Wingosy")
+        self.setWindowTitle(f"Save Location Suggestions — {game_name} — Rom Mate")
         self.setFixedSize(680, 350)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
         self.selected_path = None
@@ -250,9 +250,9 @@ class WikiSuggestionsDialog(QWidget):
         p = Path(start_path)
         while not p.exists() and p.parent != p:
             p = p.parent
-        directory = QFileDialog.getExistingDirectory(self, "Select Save Folder — Wingosy", str(p))
+        directory = QFileDialog.getExistingDirectory(self, "Select Save Folder — Rom Mate", str(p))
         if directory:
-            if StyledMessageBox.question(self, "Confirm — Wingosy", f"Use this folder?\n{directory}", StyledMessageBox.Yes | StyledMessageBox.No) == StyledMessageBox.Yes:
+            if StyledMessageBox.question(self, "Confirm — Rom Mate", f"Use this folder?\n{directory}", StyledMessageBox.Yes | StyledMessageBox.No) == StyledMessageBox.Yes:
                 self.selected_path = directory
                 self.accepted_path.emit(directory)
                 self.close()
@@ -278,7 +278,7 @@ class WikiFetchWorker(QThread):
 class SaveSyncSetupDialog(QWidget):
     def __init__(self, game_name, config, main_window, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Set Up Save Sync — Wingosy")
+        self.setWindowTitle("Set Up Save Sync — Rom Mate")
         self.game_name = game_name
         self.config = config
         self.main_window = main_window
@@ -343,7 +343,7 @@ class SaveSyncSetupDialog(QWidget):
     def get_suggestions(self):
         self.loading_dlg = StyledMessageBox(
             self,
-            "Fetching — Wingosy",
+            "Fetching — Rom Mate",
             "Querying PCGamingWiki...",
             buttons=0,
         )
@@ -373,7 +373,7 @@ class SaveSyncSetupDialog(QWidget):
         self.btn_wiki.setEnabled(True)
         
         if not res:
-            StyledMessageBox.information(self, "No Suggestions — Wingosy", "None found. Browse manually.")
+            StyledMessageBox.information(self, "No Suggestions — Rom Mate", "None found. Browse manually.")
             self.browse_manually()
             return
             
@@ -396,10 +396,10 @@ class SaveSyncSetupDialog(QWidget):
         if self.wiki_timeout: self.wiki_timeout.stop()
         self.loading_dlg.close()
         self.btn_wiki.setEnabled(True)
-        StyledMessageBox.warning(self, "Error — Wingosy", "Failed to reach wiki.")
+        StyledMessageBox.warning(self, "Error — Rom Mate", "Failed to reach wiki.")
         
     def browse_manually(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Save Folder — Wingosy")
+        directory = QFileDialog.getExistingDirectory(self, "Select Save Folder — Rom Mate")
         if directory:
             self.selected_path = directory
             self.accepted.emit()
@@ -455,7 +455,7 @@ class CloudSaveManagerDialog(QWidget):
         self.config = config
         self.main_window = main_window
         
-        self.setWindowTitle(f"Cloud Save History — {game.get('name')} — Wingosy")
+        self.setWindowTitle(f"Cloud Save History — {game.get('name')} — Rom Mate")
         self.setFixedSize(600, 450)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint | Qt.WindowTitleHint)
         
@@ -587,7 +587,7 @@ class CloudSaveManagerDialog(QWidget):
 
     def restore_version(self, item):
         msg = f"Restore this {item['_type']}?\n\nYour current local save will be backed up to .bak first."
-        if StyledMessageBox.question(self, "Restore Version — Wingosy", msg, StyledMessageBox.Yes | StyledMessageBox.No) != StyledMessageBox.Yes:
+        if StyledMessageBox.question(self, "Restore Version — Rom Mate", msg, StyledMessageBox.Yes | StyledMessageBox.No) != StyledMessageBox.Yes:
             return
 
         # Use extraction/restore logic from GameDetailPanel? 

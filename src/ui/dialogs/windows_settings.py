@@ -34,7 +34,7 @@ class WikiSuggestionDialog(QDialog):
     path_selected = Signal(str)
     def __init__(self, suggestions, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PCGamingWiki Suggestions — Wingosy")
+        self.setWindowTitle("PCGamingWiki Suggestions — Rom Mate")
         self.setFixedSize(500, 400)
         self.setStyleSheet("background-color: #1a1a1a; color: white;")
         
@@ -80,7 +80,7 @@ class WindowsGameSettingsDialog(QWidget):
         
         self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
         self.setFixedSize(550, 450)
-        self.setWindowTitle(f"Game Settings — {game.get('name')} — Wingosy")
+        self.setWindowTitle(f"Game Settings — {game.get('name')} — Rom Mate")
         
         self.setStyleSheet("""
             QWidget {
@@ -299,7 +299,7 @@ class WindowsGameSettingsDialog(QWidget):
         if not folder.exists(): return
         exes = [str(p) for p in folder.rglob("*.exe") if not any(e.lower() in str(p).lower() for e in EXCLUDED_EXES)]
         if not exes:
-            StyledMessageBox.information(self, "No EXEs — Wingosy", "None found.")
+            StyledMessageBox.information(self, "No EXEs — Rom Mate", "None found.")
             return
         if len(exes) == 1:
             self.default_exe = exes[0]
@@ -310,13 +310,13 @@ class WindowsGameSettingsDialog(QWidget):
             p.show()
                 
     def browse_exe(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Select Executable — Wingosy", "", "Executables (*.exe *.bat *.cmd)")
+        p, _ = QFileDialog.getOpenFileName(self, "Select Executable — Rom Mate", "", "Executables (*.exe *.bat *.cmd)")
         if p:
             self.default_exe = p
             self.update_ui()
             
     def browse_save_dir(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Save Folder — Wingosy")
+        directory = QFileDialog.getExistingDirectory(self, "Select Save Folder — Rom Mate")
         if directory:
             self.save_dir = directory
             self.update_ui()
@@ -334,7 +334,7 @@ class WindowsGameSettingsDialog(QWidget):
         self.update_ui()
         
         if not suggestions:
-            StyledMessageBox.information(self, "No Results — Wingosy", "No save locations found on PCGamingWiki.")
+            StyledMessageBox.information(self, "No Results — Rom Mate", "No save locations found on PCGamingWiki.")
             return
             
         dlg = WikiSuggestionDialog(suggestions, self)

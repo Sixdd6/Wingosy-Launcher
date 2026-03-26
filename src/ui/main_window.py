@@ -99,9 +99,9 @@ class WingosyMainWindow(QMainWindow):
         except Exception:
             pass
 
-        self.setWindowTitle("Wingosy Launcher")
+        self.setWindowTitle("Rom Mate")
         self.resize(1100, 800)
-        settings = QSettings("Wingosy", "WingosyLauncher")
+        settings = QSettings("RomMate", "RomMate")
         try:
             self._restore_maximized = bool(settings.value("was_maximized", False))
         except Exception:
@@ -144,7 +144,7 @@ class WingosyMainWindow(QMainWindow):
                 self,
                 "Credential Storage Warning",
                 "Your system's secure credential manager is unavailable.\n\n"
-                "Wingosy has stored your login token using local encryption instead.\n\n"
+                "Rom Mate has stored your login token using local encryption instead.\n\n"
                 "This is less secure than keyring. Consider enabling your OS keyring."
             )
             self.config.data.pop("keyring_failed", None)
@@ -1246,7 +1246,7 @@ class WingosyMainWindow(QMainWindow):
         self._is_shutting_down = True
         self._shutdown_threads()
         
-        settings = QSettings("Wingosy", "WingosyLauncher")
+        settings = QSettings("RomMate", "RomMate")
         try:
             settings.setValue("was_maximized", self.isMaximized())
         except Exception:

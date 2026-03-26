@@ -32,19 +32,19 @@ jobs:
       - name: Build EXE
         run: |
           # Pillow is now installed, so PyInstaller can convert icon.png to .ico automatically
-          pyinstaller --noconsole --onefile --name Wingosy --icon "assets/icon.png" --add-data "assets;assets" --hidden-import sqlite3 --hidden-import src.ui --hidden-import src.ui.main_window --hidden-import src.ui.dialogs --hidden-import src.ui.threads --hidden-import src.ui.widgets --hidden-import src.ui.tabs --hidden-import src.ui.tabs.library --hidden-import src.ui.tabs.emulators main.py
+          pyinstaller --noconsole --onefile --name RomMate --icon "assets/icon.png" --add-data "assets;assets" --hidden-import sqlite3 --hidden-import src.ui --hidden-import src.ui.main_window --hidden-import src.ui.dialogs --hidden-import src.ui.threads --hidden-import src.ui.widgets --hidden-import src.ui.tabs --hidden-import src.ui.tabs.library --hidden-import src.ui.tabs.emulators main.py
 
       - name: Upload build artifact
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: Wingosy
-          path: dist/Wingosy.exe
+          name: RomMate
+          path: dist/RomMate.exe
           
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Wingosy.exe
+          files: dist/RomMate.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -67,7 +67,7 @@ class PostSessionSyncThread(QThread):
                     self.done.emit(title, True)
                     return
                 
-                self.log.emit(f"☁️ No wingosy cloud save found for {title}, uploading...")
+                self.log.emit(f"☁️ No Rom Mate cloud save found for {title}, uploading...")
 
             ok = True  # innocent until proven guilty
             uploaded_count = 0
@@ -165,12 +165,12 @@ class PostSessionSyncThread(QThread):
             if ok:
                 if uploaded_count > 0:
                     self.log.emit(f"✅ Sync complete: {title}")
-                    self.notify.emit("Wingosy", f"✅ Saved to cloud: {title}")
+                    self.notify.emit("Rom Mate", f"✅ Saved to cloud: {title}")
                 else:
                     self.log.emit(f"💤 No changes to sync for {title}")
             else:
                 self.log.emit(f"❌ Sync failed: {title}")
-                self.notify.emit("Wingosy", f"❌ Sync failed: {title}")
+                self.notify.emit("Rom Mate", f"❌ Sync failed: {title}")
             
             self.done.emit(title, ok)
 
@@ -178,7 +178,7 @@ class PostSessionSyncThread(QThread):
             logging.error(f"[SyncThread] Error for {title}: {e}")
             traceback.print_exc()
             self.log.emit(f"❌ Sync error for {title}: {e}")
-            self.notify.emit("Wingosy", f"❌ Sync error: {title}")
+            self.notify.emit("Rom Mate", f"❌ Sync error: {title}")
             self.done.emit(title, False)
 
 class WingosyWatcher(QThread):
@@ -507,7 +507,7 @@ class WingosyWatcher(QThread):
                     self._update_playtime(data)
                     return
                 # Cloud missing — upload anyway
-                self.log_signal.emit(f"☁️ No wingosy cloud save found for {title}, uploading...")
+                self.log_signal.emit(f"☁️ No Rom Mate cloud save found for {title}, uploading...")
             should_sync = True
         else:
             # Fallback to mtime check ONLY if hash is unavailable

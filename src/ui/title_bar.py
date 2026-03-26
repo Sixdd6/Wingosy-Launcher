@@ -32,7 +32,7 @@ class WingosyTitleBar(QWidget):
         self.layout.addSpacing(8)
 
         # App title
-        self.title_label = QLabel("Wingosy")
+        self.title_label = QLabel("Rom Mate")
         self.title_label.setStyleSheet("color: white; font-weight: bold; font-size: 13px;")
         self.layout.addWidget(self.title_label)
         self.layout.addSpacing(12)

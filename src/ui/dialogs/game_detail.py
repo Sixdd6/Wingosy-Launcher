@@ -234,14 +234,14 @@ def check_retroarch_autosave(ra_exe_path, platform_slug, parent, config=None):
     
     result = StyledMessageBox.question(
         parent, 
-        "RetroArch Auto-Save States — Wingosy", 
+        "RetroArch Auto-Save States — Rom Mate", 
         f"Enable auto save/load states in retroarch.cfg?\n\nMissing: {', '.join(missing)}", 
         StyledMessageBox.Yes | StyledMessageBox.No
     )
     
     if result == StyledMessageBox.Yes:
         write_retroarch_cfg_values(str(cfg_path), {"savestate_auto_save": "true", "savestate_auto_load": "true"})
-        StyledMessageBox.information(parent, "RetroArch Auto-Save States — Wingosy", "✅ Auto save/load states enabled.")
+        StyledMessageBox.information(parent, "RetroArch Auto-Save States — Rom Mate", "✅ Auto save/load states enabled.")
 
 def check_ppsspp_assets(ra_exe_path, parent):
     global _ppsspp_assets_checked
@@ -255,7 +255,7 @@ def check_ppsspp_assets(ra_exe_path, parent):
         
     result = StyledMessageBox.question(
         parent, 
-        "PPSSPP Assets Missing — Wingosy", 
+        "PPSSPP Assets Missing — Rom Mate", 
         "Download missing PPSSPP assets now?", 
         StyledMessageBox.Yes | StyledMessageBox.No
     )
@@ -265,7 +265,7 @@ def check_ppsspp_assets(ra_exe_path, parent):
         
     progress = StyledMessageBox(
         parent,
-        "Downloading PPSSPP Assets — Wingosy",
+        "Downloading PPSSPP Assets — Rom Mate",
         "Downloading...",
         buttons=0,
     )
@@ -294,10 +294,10 @@ def check_ppsspp_assets(ra_exe_path, parent):
         
         Path(tmp_path).unlink(missing_ok=True)
         progress.close()
-        StyledMessageBox.information(parent, "PPSSPP Assets Ready — Wingosy", "✅ Done.")
+        StyledMessageBox.information(parent, "PPSSPP Assets Ready — Rom Mate", "✅ Done.")
     except Exception as e:
         progress.close()
-        StyledMessageBox.warning(parent, "Download Failed — Wingosy", str(e))
+        StyledMessageBox.warning(parent, "Download Failed — Rom Mate", str(e))
 
 class GameDetailPanel(QWidget):
     def __init__(self, game, client, config, main_window, on_close=None, parent=None):
@@ -1941,7 +1941,7 @@ class GameDetailPanel(QWidget):
             
         try:
             dlg = UninstallConfirmDialog(
-                "Uninstall — Wingosy",
+                "Uninstall — Rom Mate",
                 msg,
                 parent=self,
             )
@@ -1967,7 +1967,7 @@ class GameDetailPanel(QWidget):
                             pass
                         self.main_window.library_tab.apply_filters()
                 except Exception as e:
-                    StyledMessageBox.critical(self, "Error — Wingosy", str(e))
+                    StyledMessageBox.critical(self, "Error — Rom Mate", str(e))
         finally:
             self._uninstall_dialog_open = False
             try:
@@ -2009,7 +2009,7 @@ class GameDetailPanel(QWidget):
             # 1. Check if already installed
             if extracted_dir.exists() and any(extracted_dir.rglob("*.exe")):
                 StyledMessageBox.information(
-                    self, "Already Installed — Wingosy",
+                    self, "Already Installed — Rom Mate",
                     f"{self.game['name']} appears to already be installed at:\n{extracted_dir}\n\nUse the Play button to launch it."
                 )
                 self._update_button_states()
@@ -2018,7 +2018,7 @@ class GameDetailPanel(QWidget):
             # 2. Check if archive exists
             if archive_path.exists():
                 reply = StyledMessageBox.question(
-                    self, "Archive Already Downloaded — Wingosy",
+                    self, "Archive Already Downloaded — Rom Mate",
                     f"{rom_name} already exists in your Windows Games folder.\n\nWould you like to extract it now instead of downloading again?",
                     StyledMessageBox.Yes | StyledMessageBox.No | StyledMessageBox.Cancel,
                     StyledMessageBox.Yes
@@ -2209,7 +2209,7 @@ class GameDetailPanel(QWidget):
     def play_game(self):
         local_rom = self._get_local_rom_path(prefer_m3u_for_multi=True)
         if not local_rom or not local_rom.exists():
-            StyledMessageBox.warning(self, "Error — Wingosy", "Could not find the local ROM file. Please download it first.")
+            StyledMessageBox.warning(self, "Error — Rom Mate", "Could not find the local ROM file. Please download it first.")
             return
             
         emu_data = None
@@ -2242,7 +2242,7 @@ class GameDetailPanel(QWidget):
                 )
 
         if not emu_data or (not emu_data.get("is_native") and (not emu_data.get("executable_path") or not os.path.exists(emu_data["executable_path"]))):
-            StyledMessageBox.warning(self, "Error — Wingosy", "No valid emulator configured.")
+            StyledMessageBox.warning(self, "Error — Rom Mate", "No valid emulator configured.")
             return
             
         self.main_window.log(f"🎮 Preparing {self.game.get('name')}...")
@@ -2286,7 +2286,7 @@ class GameDetailPanel(QWidget):
                                 return # Launching happens after picking
                 
                 if not exe_to_launch:
-                    StyledMessageBox.warning(self, "Error — Wingosy", "No game executable found.")
+                    StyledMessageBox.warning(self, "Error — Rom Mate", "No game executable found.")
                     return
 
                 self._launch_windows_exe(exe_to_launch)
@@ -2301,7 +2301,7 @@ class GameDetailPanel(QWidget):
                     if core_path.exists():
                         args = [exe_path, "-L", str(core_path), str(local_rom)]
                     else:
-                        if StyledMessageBox.question(self, "Error — Wingosy", f"Core {core_name} missing. Download?") == StyledMessageBox.Yes:
+                        if StyledMessageBox.question(self, "Error — Rom Mate", f"Core {core_name} missing. Download?") == StyledMessageBox.Yes:
                             self.start_core_download(core_name, Path(exe_path).parent, platform)
                         return
                 else:
@@ -2322,7 +2322,7 @@ class GameDetailPanel(QWidget):
             if self.main_window.watcher:
                 QTimer.singleShot(0, lambda: self.main_window.watcher.track_session(proc, emu_data["name"], self.game, str(local_rom), exe_path, skip_pull=True))
         except Exception as e:
-            StyledMessageBox.critical(self, "Error — Wingosy", str(e))
+            StyledMessageBox.critical(self, "Error — Rom Mate", str(e))
 
     def _launch_windows_exe(self, exe_path):
         self.main_window.log(f"🚀 Launching Windows Game: {os.path.basename(exe_path)}")
@@ -2338,7 +2338,7 @@ class GameDetailPanel(QWidget):
     def start_core_download(self, core_name, emu_dir, platform):
         from src.ui.threads import CoreDownloadThread
         dlg = QDialog(self) # Still modal for core DL
-        dlg.setWindowTitle(f"Downloading {core_name} — Wingosy")
+        dlg.setWindowTitle(f"Downloading {core_name} — Rom Mate")
         dlg.setFixedSize(350, 100)
         l = QVBoxLayout(dlg)
         status = QLabel(f"Downloading for {platform}...")
@@ -2349,7 +2349,7 @@ class GameDetailPanel(QWidget):
         
         t = CoreDownloadThread(core_name, emu_dir / "cores")
         t.progress.connect(lambda v, s: (pb.setValue(v), status.setText(f"Speed: {format_speed(s)}")))
-        t.finished.connect(lambda success, msg: (dlg.close(), self.play_game() if success else StyledMessageBox.critical(self, "Error — Wingosy", msg)))
+        t.finished.connect(lambda success, msg: (dlg.close(), self.play_game() if success else StyledMessageBox.critical(self, "Error — Rom Mate", msg)))
         t.start()
         dlg.exec()
 

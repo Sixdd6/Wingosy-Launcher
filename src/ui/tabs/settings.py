@@ -42,7 +42,7 @@ class SettingsTab(QWidget):
         self.layout.addWidget(self.scroll)
 
         # Version Label (Fixed at bottom)
-        self.version_label = QLabel(f"Wingosy v{self.main_window.version}")
+        self.version_label = QLabel(f"Rom Mate v{self.main_window.version}")
         self.version_label.setStyleSheet("color: #444; font-size: 10px; padding: 10px;")
         self.version_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.version_label)
