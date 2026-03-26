@@ -11,6 +11,7 @@ import hashlib
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QPixmap, QImage
+from src.app_paths import primary_app_dir
 
 from src.sevenzip import get_7zip_exe
 from src import download_registry
@@ -92,12 +93,12 @@ class ImageFetcher(QThread):
         self.url = url
     def run(self):
         try:
-            log = logging.getLogger("wingosy.cover")
+            log = logging.getLogger("rommate.cover")
             if self.isInterruptionRequested():
                 self.finished.emit(self.game_id, QImage(), b"", "", False)
                 return
 
-            cache_dir = Path.home() / ".wingosy" / "cover_cache"
+            cache_dir = primary_app_dir() / "cover_cache"
             try:
                 cache_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
@@ -238,7 +239,7 @@ class ImageFetcher(QThread):
                 self.finished.emit(self.game_id, QImage(), b"", fmt, False)
         except Exception:
             try:
-                logging.getLogger("wingosy.cover").exception("[cover] game_id=%s image fetch failed", self.game_id)
+                logging.getLogger("rommate.cover").exception("[cover] game_id=%s image fetch failed", self.game_id)
             except Exception:
                 pass
             try:

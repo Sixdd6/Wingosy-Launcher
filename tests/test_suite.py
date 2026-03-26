@@ -1,5 +1,5 @@
 """
-Wingosy Test Suite
+Rom Mate Test Suite
 Run with: pytest tests/ -v
 Run with logs: pytest tests/ -v -s
 """

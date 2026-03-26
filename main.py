@@ -16,6 +16,7 @@ if getattr(sys, 'frozen', False):
 
 import logging
 from pathlib import Path
+from src.app_paths import primary_app_dir
 
 import io
 if sys.platform == "win32":
@@ -36,7 +37,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-_log_path = Path.home() / ".wingosy" / "app.log"
+_log_path = primary_app_dir() / "app.log"
 _log_path.parent.mkdir(parents=True, exist_ok=True)
 # Overwrite log on each launch so it stays small
 logging.basicConfig(

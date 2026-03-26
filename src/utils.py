@@ -89,7 +89,7 @@ def resolve_local_rom_path(
                 candidates.append(rom_name)
 
             for name in candidates:
-                # Check for folder named after archive stem (standard Wingosy Windows install)
+                # Check for folder named after archive stem (standard Rom Mate Windows install)
                 folder = Path(wd) / Path(name).stem
                 if folder.exists() and folder.is_dir():
                     return folder
@@ -227,7 +227,7 @@ def calculate_file_hash(file_path):
 
 def calculate_folder_hash(folder_path):
     """
-    Matches RomM/Wingosy logic: sorted list of 'name:md5' lines.
+    Matches RomM/Rom Mate logic: sorted list of 'name:md5' lines.
     """
     if not os.path.exists(folder_path):
         return None

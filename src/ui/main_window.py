@@ -28,6 +28,7 @@ from src.ui.tabs.emulators import EmulatorsTab
 from src.ui.tabs.settings import SettingsTab
 from src.utils import zip_path, resolve_local_rom_path
 from src.platforms import RETROARCH_PLATFORMS, platform_matches
+from src.app_paths import preferred_existing_app_dir
 from src import emulators
 from src import download_registry
 
@@ -321,7 +322,7 @@ class RomMateMainWindow(QMainWindow):
     def _load_library_from_cache(self):
         """Load library_cache.json synchronously on startup for instant display."""
         import json
-        cache_path = Path.home() / ".wingosy" / "library_cache.json"
+        cache_path = preferred_existing_app_dir() / "library_cache.json"
         if not cache_path.exists():
             return
         try:

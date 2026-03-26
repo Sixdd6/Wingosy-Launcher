@@ -3,9 +3,10 @@ import shutil
 import logging
 import requests
 from pathlib import Path
+from src.app_paths import primary_app_dir
 
-WINGOSY_DIR = Path.home() / ".wingosy"
-LOCAL_7Z = WINGOSY_DIR / "7z.exe"
+APP_DATA_DIR = primary_app_dir()
+LOCAL_7Z = APP_DATA_DIR / "7z.exe"
 
 # Direct download URL for 7-Zip standalone console executable (7zr.exe)
 SEVENZIP_URL = "https://www.7-zip.org/a/7zr.exe"
@@ -15,8 +16,8 @@ def get_7zip_exe() -> str | None:
     Returns path to 7z/7zr executable.
     Priority:
     1. System 7z.exe (from PATH or common dirs)
-    2. Cached .wingosy/7z.exe
-    3. Download 7zr.exe to .wingosy/7z.exe
+    2. Cached app data 7z.exe
+    3. Download 7zr.exe to app data 7z.exe
     4. None (use py7zr fallback)
     """
     # 1. Check PATH
@@ -35,7 +36,7 @@ def get_7zip_exe() -> str | None:
             logging.debug(f"[7zip] Found at: {c}")
             return c
     
-    # 2. Check cached .wingosy/7z.exe
+    # 2. Check cached app data 7z.exe
     if LOCAL_7Z.exists():
         logging.debug(f"[7zip] Using cached: {LOCAL_7Z}")
         return str(LOCAL_7Z)
@@ -43,7 +44,7 @@ def get_7zip_exe() -> str | None:
     # 3. Download 7zr.exe
     logging.info("[7zip] 7-Zip not found — downloading portable 7zr.exe...")
     try:
-        WINGOSY_DIR.mkdir(parents=True, exist_ok=True)
+        APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
         # Use verify=False or certifi if needed, usually requests handles it
         r = requests.get(SEVENZIP_URL, timeout=30, stream=True)
         r.raise_for_status()

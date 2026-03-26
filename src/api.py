@@ -8,11 +8,15 @@ from urllib.parse import quote
 
 import requests
 import logging
+from src.app_paths import primary_app_dir, preferred_existing_app_dir
 
 try:
     import keyring
 except ImportError:
     keyring = None
+
+PRIMARY_KEYRING_SERVICE = "rommate"
+LEGACY_KEYRING_SERVICES = ("wingosy",)
 
 def _get_certifi_path():
     """Get certifi CA bundle path, handling PyInstaller."""
@@ -41,8 +45,16 @@ class RomMClient:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        self.library_cache_path = Path.home() / ".wingosy" / "library_cache.json"
-        self.metadata_dir_path = Path.home() / ".wingosy" / "metadata"
+        self.app_dir = primary_app_dir()
+        self.app_dir.mkdir(parents=True, exist_ok=True)
+        self.legacy_app_dir = preferred_existing_app_dir()
+        self.library_cache_path = self.app_dir / "library_cache.json"
+        self.metadata_dir_path = self.app_dir / "metadata"
+        self._legacy_metadata_dir_path = (
+            self.legacy_app_dir / "metadata"
+            if self.legacy_app_dir != self.app_dir
+            else None
+        )
 
     def _load_token(self):
         """Retrieve token via config manager (keyring with encrypted fallback)."""
@@ -52,7 +64,11 @@ class RomMClient:
         # Fallback for when config is not available (rare)
         if keyring:
             try:
-                return keyring.get_password("wingosy", "auth_token")
+                services = (PRIMARY_KEYRING_SERVICE, *LEGACY_KEYRING_SERVICES)
+                for service in services:
+                    token = keyring.get_password(service, "auth_token")
+                    if token:
+                        return token
             except Exception as e:
                 logging.warning(f"Keyring retrieval error: {e}")
         return None
@@ -64,7 +80,12 @@ class RomMClient:
             self.config.delete_token()
         elif keyring:
             try:
-                keyring.delete_password("wingosy", "auth_token")
+                services = (PRIMARY_KEYRING_SERVICE, *LEGACY_KEYRING_SERVICES)
+                for service in services:
+                    try:
+                        keyring.delete_password(service, "auth_token")
+                    except Exception:
+                        pass
                 logging.info("Logged out: removed token from keyring")
             except Exception as e:
                 logging.warning(f"Failed to remove token from keyring: {e}")
@@ -81,10 +102,19 @@ class RomMClient:
     def load_library_cache(self):
         """Load cached library. Returns (games, age_seconds) or (None, 0)."""
         try:
-            if not self.library_cache_path.exists():
+            candidates = [self.library_cache_path]
+            if self.legacy_app_dir != self.app_dir:
+                candidates.append(self.legacy_app_dir / "library_cache.json")
+
+            games = None
+            for candidate in candidates:
+                if not candidate.exists():
+                    continue
+                with open(candidate, 'r', encoding='utf-8') as f:
+                    games = json.load(f)
+                break
+            if games is None:
                 return None, 0
-            with open(self.library_cache_path, 'r', encoding='utf-8') as f:
-                games = json.load(f)
             # We no longer track age in the simplified list format, return 0
             return games, 0
         except Exception:
@@ -160,7 +190,7 @@ class RomMClient:
                     self.config.save_token(self.token)
                 elif keyring:
                     try:
-                        keyring.set_password("wingosy", "auth_token", self.token)
+                        keyring.set_password(PRIMARY_KEYRING_SERVICE, "auth_token", self.token)
                     except Exception as e:
                         logging.warning(f"Failed to save token to keyring: {e}")
                 
@@ -281,6 +311,7 @@ class RomMClient:
                     local_meta = self._read_local_wingosy_metadata(rom_id)
 
                     if local_meta is not None and isinstance(rom_data, dict):
+                        rom_data["rommate_metadata"] = local_meta
                         rom_data["wingosy_metadata"] = local_meta
 
                         local_playtime = local_meta.get("playtimeSeconds")
@@ -333,7 +364,7 @@ class RomMClient:
         if not isinstance(payload, dict):
             return None
 
-        meta = payload.get("wingosy_metadata")
+        meta = payload.get("rommate_metadata") if isinstance(payload.get("rommate_metadata"), dict) else payload.get("wingosy_metadata")
         if not isinstance(meta, dict):
             return None
 
@@ -358,11 +389,14 @@ class RomMClient:
         except Exception:
             playtime_total = 0
 
+        metadata = {
+            "playtimeSeconds": playtime_total,
+            "lastPlayed": str(last_played_iso or ""),
+        }
+
         return {
-            "wingosy_metadata": {
-                "playtimeSeconds": playtime_total,
-                "lastPlayed": str(last_played_iso or ""),
-            }
+            "rommate_metadata": metadata,
+            "wingosy_metadata": metadata,
         }
 
     def _metadata_file_path(self, rom_id):
@@ -373,19 +407,35 @@ class RomMClient:
 
     def _read_local_wingosy_metadata(self, rom_id):
         file_path = self._metadata_file_path(rom_id)
-        if file_path is None or not file_path.exists():
-            return None
+        candidates = []
+        if file_path is not None:
+            candidates.append(file_path)
+        if self._legacy_metadata_dir_path is not None and file_path is not None:
+            candidates.append(self._legacy_metadata_dir_path / file_path.name)
 
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-        except Exception:
+        payload = None
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                break
+            except Exception:
+                continue
+
+        if payload is None:
             return None
 
         if not isinstance(payload, dict):
             return None
 
-        meta = payload.get("wingosy_metadata") if isinstance(payload.get("wingosy_metadata"), dict) else payload
+        if isinstance(payload.get("rommate_metadata"), dict):
+            meta = payload.get("rommate_metadata")
+        elif isinstance(payload.get("wingosy_metadata"), dict):
+            meta = payload.get("wingosy_metadata")
+        else:
+            meta = payload
         if not isinstance(meta, dict):
             return None
 
@@ -458,10 +508,10 @@ class RomMClient:
                 break
 
         payload = {
-            "title": "Wingosy Metadata",
+            "title": "Rom Mate Metadata",
             "content": note_text,
             "is_public": False,
-            "tags": ["wingosy", "metadata"],
+            "tags": ["rommate", "metadata"],
         }
 
         note_id = self._extract_note_id(existing_note)
@@ -763,7 +813,7 @@ class RomMClient:
             print(f"[API] download_state error: {e}")
             return False
 
-    def upload_save(self, rom_id, emulator, file_obj, slot="wingosy-windows", raw=False, filename_override=None):
+    def upload_save(self, rom_id, emulator, file_obj, slot="rommate-windows", raw=False, filename_override=None):
         try:
             url = f"{self.host}/api/saves"
             params = {
@@ -798,7 +848,7 @@ class RomMClient:
             print(f"[API] upload_save error: {e}")
             return False, str(e)
 
-    def upload_state(self, rom_id, emulator, file_obj, slot="wingosy-state", filename_override=None):
+    def upload_state(self, rom_id, emulator, file_obj, slot="rommate-state", filename_override=None):
         try:
             from pathlib import Path
             

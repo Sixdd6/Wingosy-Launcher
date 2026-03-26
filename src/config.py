@@ -7,6 +7,7 @@ import base64
 import hashlib
 import uuid
 from pathlib import Path
+from src.app_paths import migrate_legacy_to_primary, primary_app_dir
 
 try:
     import keyring
@@ -14,6 +15,9 @@ except ImportError:
     keyring = None
 
 from cryptography.fernet import Fernet
+
+PRIMARY_KEYRING_SERVICE = "rommate"
+LEGACY_KEYRING_SERVICES = ("wingosy",)
 
 def _get_machine_key() -> bytes:
     """
@@ -50,7 +54,7 @@ class ConfigManager:
         "log_level": "INFO",
         "platform_assignments": {},
         "retroarch_save_mode": "srm",
-        "device_id": "wingosy-win-default",
+        "device_id": "rommate-win-default",
         "windows_sync_enabled": True,
         "windows_conflict_behavior": "ask",
         "conflict_behavior": "ask",
@@ -166,34 +170,14 @@ class ConfigManager:
     }
 
     def __init__(self):
-        self.config_dir = Path.home() / ".wingosy"
+        self.config_dir = primary_app_dir()
         self.config_file = self.config_dir / "config.json"
         self._token_memory_only = None
-        
-        # MIGRATION LOGIC: Be extremely thorough to restore user data
-        old_dir = Path.home() / ".argosy"
-        if old_dir.exists():
-            should_migrate = False
-            if not self.config_dir.exists() or not self.config_file.exists():
-                should_migrate = True
-            else:
-                # If .wingosy exists but host is still default, it was a failed rebranding attempt
-                try:
-                    with open(self.config_file, 'r', encoding='utf-8') as f:
-                        current = json.load(f)
-                        if current.get("host") == "http://localhost:8285":
-                            should_migrate = True
-                except:
-                    should_migrate = True
 
-            if should_migrate:
-                try:
-                    if self.config_dir.exists():
-                        shutil.rmtree(self.config_dir, ignore_errors=True)
-                    shutil.copytree(old_dir, self.config_dir)
-                    print(f"Successfully migrated all settings and library from {old_dir}")
-                except Exception as e:
-                    print(f"Migration error: {e}")
+        try:
+            migrate_legacy_to_primary()
+        except Exception:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
 
         # Load fresh copy of default config
         self.data = copy.deepcopy(self.DEFAULT_CONFIG)
@@ -273,7 +257,7 @@ class ConfigManager:
         # 1. Try keyring first (best)
         try:
             if keyring:
-                keyring.set_password("wingosy", "auth_token", token)
+                keyring.set_password(PRIMARY_KEYRING_SERVICE, "auth_token", token)
                 # Mark that keyring worked
                 self.data.pop("encrypted_token", None)
                 self.data.pop("keyring_failed", None)
@@ -298,9 +282,11 @@ class ConfigManager:
         # 1. Try keyring
         try:
             if keyring:
-                token = keyring.get_password("wingosy", "auth_token")
-                if token:
-                    return token
+                services = (PRIMARY_KEYRING_SERVICE, *LEGACY_KEYRING_SERVICES)
+                for service in services:
+                    token = keyring.get_password(service, "auth_token")
+                    if token:
+                        return token
         except Exception:
             pass
 
@@ -319,7 +305,12 @@ class ConfigManager:
         # Clear keyring
         try:
             if keyring:
-                keyring.delete_password("wingosy", "auth_token")
+                services = (PRIMARY_KEYRING_SERVICE, *LEGACY_KEYRING_SERVICES)
+                for service in services:
+                    try:
+                        keyring.delete_password(service, "auth_token")
+                    except Exception:
+                        pass
         except Exception:
             pass
         # Clear encrypted fallback

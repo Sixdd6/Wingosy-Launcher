@@ -236,12 +236,12 @@ class DummyRomMClient:
 
     def upload_save(self, rom_id, emulator, file_path, 
 
-                    slot="wingosy-windows", raw=False):
+                    slot="rommate-windows", raw=False):
         print(f"[DummyClient] Fake save upload for rom_id={rom_id} (raw={raw})")
         return True, "dummy upload ok"
 
     def upload_state(self, rom_id, emulator, file_path,
-                     slot="wingosy-state"):
+                     slot="rommate-state"):
         print(f"[DummyClient] Fake state upload for rom_id={rom_id}")
         return True, "dummy upload ok"
 

@@ -19,7 +19,7 @@ class TestKeyringIntegration(unittest.TestCase):
         
         self.config = ConfigManager()
         # Re-set these to be absolutely sure they point to our temp dir
-        self.config.config_dir = self.home_path / ".wingosy"
+        self.config.config_dir = self.home_path / ".rommate"
         self.config.config_file = self.config.config_dir / "config.json"
         self.config.config_dir.mkdir(parents=True, exist_ok=True)
         self.config.save() # Create initial file
@@ -45,7 +45,7 @@ class TestKeyringIntegration(unittest.TestCase):
         self.config.load()
         
         # Verify keyring.set_password was called
-        mock_set.assert_called_with("wingosy", "auth_token", "old-plaintext-token")
+        mock_set.assert_called_with("rommate", "auth_token", "old-plaintext-token")
         
         # Verify token is removed from memory data
         self.assertIsNone(self.config.get("token"))
@@ -71,7 +71,7 @@ class TestKeyringIntegration(unittest.TestCase):
         self.assertEqual(token, "new-secure-token")
         
         # Verify keyring was updated
-        mock_set.assert_called_with("wingosy", "auth_token", "new-secure-token")
+        mock_set.assert_called_with("rommate", "auth_token", "new-secure-token")
         
         # Verify it did NOT save to config.json
         with open(self.config_path, "r") as f:
@@ -82,7 +82,7 @@ class TestKeyringIntegration(unittest.TestCase):
     def test_startup_retrieves_from_keyring(self, mock_get):
         client = RomMClient("http://localhost:8285", config=self.config)
         self.assertEqual(client.token, "secure-token-from-keyring")
-        mock_get.assert_called_with("wingosy", "auth_token")
+        mock_get.assert_any_call("rommate", "auth_token")
 
     @patch("keyring.get_password", side_effect=Exception("Keyring locked"))
     def test_keyring_failure_fallbacks_to_config(self, mock_get):
@@ -102,7 +102,8 @@ class TestKeyringIntegration(unittest.TestCase):
         client.logout()
         
         self.assertIsNone(client.token)
-        mock_delete.assert_called_with("wingosy", "auth_token")
+        mock_delete.assert_any_call("rommate", "auth_token")
+        mock_delete.assert_any_call("wingosy", "auth_token")
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,9 +11,20 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal, QTimer, Slot, Qt, QCoreApplication
+from src.app_paths import primary_app_dir, preferred_existing_app_dir
 from src.utils import calculate_folder_hash, calculate_file_hash, calculate_zip_content_hash, zip_path, extract_strip_root
 from src import emulators
 from src.save_strategies import get_strategy
+
+SAVE_SLOT_PREFIX = "rommate-srm"
+LEGACY_SAVE_SLOT_PREFIXES = (SAVE_SLOT_PREFIX, "wingosy-srm")
+STATE_SLOT_PREFIX = "rommate-state"
+LEGACY_STATE_SLOT_PREFIXES = (STATE_SLOT_PREFIX, "wingosy-state")
+
+
+def _slot_has_prefix(slot, prefixes):
+    value = str(slot or "")
+    return any(value.startswith(prefix) for prefix in prefixes)
 
 class PostSessionSyncThread(QThread):
     done = Signal(str, bool)   # rom_name, success
@@ -56,8 +67,8 @@ class PostSessionSyncThread(QThread):
             if init_h is not None and new_h == init_h and new_m <= init_m:
                 try:
                     all_saves = self.watcher.client.list_all_saves(str(self.rom_id))
-                    wingosy_saves = [s for s in all_saves if str(s.get('slot','')).startswith('wingosy-srm')]
-                    cloud_missing = len(wingosy_saves) == 0
+                    tracked_saves = [s for s in all_saves if _slot_has_prefix(s.get('slot', ''), LEGACY_SAVE_SLOT_PREFIXES)]
+                    cloud_missing = len(tracked_saves) == 0
                 except Exception:
                     cloud_missing = False
                 
@@ -88,12 +99,12 @@ class PostSessionSyncThread(QThread):
             if folder_files:
                 # Folder (e.g. PSP SAVEDATA) — zip and upload as save
                 save_dir = folder_files[0]
-                temp_zip = Path.home() / ".wingosy" / "tmp" / f"upload_{rom_id}.zip"
+                temp_zip = self.watcher.tmp_dir / f"upload_{rom_id}.zip"
                 temp_zip.parent.mkdir(parents=True, exist_ok=True)
                 zip_path(str(save_dir), str(temp_zip))
                 
                 fname = f"save{ts}.zip"
-                slot_name = f"wingosy-srm{ts}"
+                slot_name = f"{SAVE_SLOT_PREFIX}{ts}"
                 logging.info(f"[SyncThread] Uploading folder save: slot={slot_name}, filename={fname}")
                 ok2, msg = self.watcher.client.upload_save(rom_id, emu_id, str(temp_zip), slot=slot_name, filename_override=fname)
                 if ok2:
@@ -103,14 +114,14 @@ class PostSessionSyncThread(QThread):
 
             if ps2_files:
                 # PS2 Memory Cards — zip all .ps2 files together and upload as one save
-                temp_zip = Path.home() / ".wingosy" / "tmp" / f"ps2_upload_{rom_id}.zip"
+                temp_zip = self.watcher.tmp_dir / f"ps2_upload_{rom_id}.zip"
                 temp_zip.parent.mkdir(parents=True, exist_ok=True)
                 with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
                     for f in ps2_files:
                         zf.write(f, f.name)
                 
                 fname = f"memcards{ts}.zip"
-                slot_name = f"wingosy-srm{ts}"
+                slot_name = f"{SAVE_SLOT_PREFIX}{ts}"
                 logging.info(f"[SyncThread] Uploading PS2 memcards zip: slot={slot_name}, filename={fname} ({len(ps2_files)} files)")
                 ok2, msg = self.watcher.client.upload_save(rom_id, emu_id, str(temp_zip), slot=slot_name, filename_override=fname)
                 if ok2:
@@ -120,7 +131,7 @@ class PostSessionSyncThread(QThread):
 
             for save_file in regular_save_files:
                 fname = f"{save_file.stem}{ts}{save_file.suffix}"
-                slot_name = f"wingosy-srm{ts}"
+                slot_name = f"{SAVE_SLOT_PREFIX}{ts}"
                 logging.info(f"[SyncThread] Uploading SRM: slot={slot_name}, filename={fname}")
                 ok2, msg = self.watcher.client.upload_save(rom_id, emu_id, str(save_file), slot=slot_name, filename_override=fname)
                 if ok2:
@@ -129,7 +140,7 @@ class PostSessionSyncThread(QThread):
 
             for st in state_files:
                 fname = f"{st.stem}{ts}{st.suffix}"
-                slot_name = f"wingosy-state{ts}"
+                slot_name = f"{STATE_SLOT_PREFIX}{ts}"
                 logging.info(f"[SyncThread] Uploading state: slot={slot_name}, filename={fname}")
                 ok2, msg = self.watcher.client.upload_state(rom_id, emu_id, str(st), slot=slot_name, filename_override=fname)
                 if ok2:
@@ -140,23 +151,23 @@ class PostSessionSyncThread(QThread):
             if ok and uploaded_count > 0:
                 try:
                     limit = self.watcher.config.get("max_save_versions", 5)
-                    # Prune saves (only wingosy-srm* slots)
+                    # Prune saves (rommate-srm* plus legacy wingosy-srm*)
                     saves = self.watcher.client.list_all_saves(rom_id)
-                    wingosy_saves = [s for s in saves if str(s.get("slot", "")).startswith("wingosy-srm")]
+                    tracked_saves = [s for s in saves if _slot_has_prefix(s.get("slot", ""), LEGACY_SAVE_SLOT_PREFIXES)]
                     
-                    if len(wingosy_saves) > limit:
-                        wingosy_saves.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-                        for old in wingosy_saves[limit:]:
+                    if len(tracked_saves) > limit:
+                        tracked_saves.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+                        for old in tracked_saves[limit:]:
                             logging.info(f"[SyncThread] Deleting old save version: {old.get('slot')} (ID: {old['id']})")
                             self.watcher.client.delete_save(old['id'])
                     
-                    # Prune states (only wingosy-state* slots)
+                    # Prune states (rommate-state* plus legacy wingosy-state*)
                     states = self.watcher.client.list_all_states(rom_id)
-                    wingosy_states = [s for s in states if str(s.get("slot", "")).startswith("wingosy-state")]
+                    tracked_states = [s for s in states if _slot_has_prefix(s.get("slot", ""), LEGACY_STATE_SLOT_PREFIXES)]
                     
-                    if len(wingosy_states) > limit:
-                        wingosy_states.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-                        for old in wingosy_states[limit:]:
+                    if len(tracked_states) > limit:
+                        tracked_states.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+                        for old in tracked_states[limit:]:
                             logging.info(f"[SyncThread] Deleting old state version: {old.get('slot')} (ID: {old['id']})")
                             self.watcher.client.delete_state(old['id'])
                 except Exception as e:
@@ -201,10 +212,21 @@ class RomMateWatcher(QThread):
         self._sync_threads = []
         self._active_conflicts = set()
 
-        self.tmp_dir = Path.home() / ".wingosy" / "tmp"
+        self.app_dir = primary_app_dir()
+        self.app_dir.mkdir(parents=True, exist_ok=True)
+
+        self.tmp_dir = self.app_dir / "tmp"
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         
-        self.cache_path = Path.home() / ".wingosy" / "sync_cache.json"
+        self.cache_path = self.app_dir / "sync_cache.json"
+        legacy_app_dir = preferred_existing_app_dir()
+        legacy_cache_path = legacy_app_dir / "sync_cache.json"
+        if (not self.cache_path.exists()) and legacy_cache_path.exists() and legacy_cache_path != self.cache_path:
+            try:
+                shutil.copy2(legacy_cache_path, self.cache_path)
+            except Exception:
+                pass
+
         self.sync_cache = {}
         if self.cache_path.exists():
             try:
@@ -497,8 +519,8 @@ class RomMateWatcher(QThread):
                 # Even if unchanged locally, sync if cloud has no save or hash differs
                 try:
                     all_saves = self.client.list_all_saves(str(rom_id))
-                    wingosy_saves = [s for s in all_saves if str(s.get('slot','')).startswith('wingosy-srm')]
-                    cloud_missing = len(wingosy_saves) == 0
+                    tracked_saves = [s for s in all_saves if _slot_has_prefix(s.get('slot', ''), LEGACY_SAVE_SLOT_PREFIXES)]
+                    cloud_missing = len(tracked_saves) == 0
                 except Exception:
                     cloud_missing = False
                 

@@ -1,5 +1,5 @@
 """
-conftest.py — shared pytest fixtures and configuration for Wingosy tests.
+conftest.py — shared pytest fixtures and configuration for Rom Mate tests.
 """
 import pytest
 import sys

@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QComboBox, QFileDialog, QSpinBox, QScrollArea,
                              QCheckBox, QFrame, QApplication)
 from PySide6.QtCore import Qt, QTimer
+from src.app_paths import primary_app_dir
 
 from src.ui.threads import UpdaterThread, SelfUpdateThread
 from src.ui.dialogs.styled_messagebox import StyledMessageBox
@@ -394,7 +395,7 @@ class SettingsTab(QWidget):
                 # We write a temporary batch file that waits for THIS process PID to die, 
                 # then starts the new one.
                 pid = os.getpid()
-                bat_path = Path.home() / ".wingosy" / "restart_bridge.bat"
+                bat_path = primary_app_dir() / "restart_bridge.bat"
                 bat_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 # The batch logic:

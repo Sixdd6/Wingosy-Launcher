@@ -19,6 +19,7 @@ from src.ui.widgets import format_size, get_resource_path, format_speed
 from src.platforms import RETROARCH_CORES
 from src import emulators, windows_saves, download_registry
 from src.save_strategies import get_strategy
+from src.app_paths import preferred_existing_app_dir
 from src.utils import read_retroarch_cfg, write_retroarch_cfg_values, extract_strip_root, resolve_local_rom_path
 
 _retroarch_autosave_checked = False
@@ -921,7 +922,7 @@ class GameDetailPanel(QWidget):
         url = self.client.get_cover_url(self.game)
         if url:
             try:
-                logging.getLogger("wingosy.cover").debug(
+                logging.getLogger("rommate.cover").debug(
                     "[cover] detail start game_id=%s url=%s",
                     self.game.get('id'),
                     url,
@@ -932,7 +933,7 @@ class GameDetailPanel(QWidget):
             def _safe_set_pixmap(g, img, _raw=b"", _fmt="", _is_animated=False):
                 try:
                     try:
-                        logging.getLogger("wingosy.cover").debug(
+                        logging.getLogger("rommate.cover").debug(
                             "[cover] detail callback expected_game_id=%s signal_game_id=%s animated=%s fmt=%s raw_bytes=%s image_null=%s",
                             self.game.get('id'),
                             g,
@@ -946,7 +947,7 @@ class GameDetailPanel(QWidget):
 
                     if _is_animated and _raw:
                         try:
-                            logging.getLogger("wingosy.cover").debug(
+                            logging.getLogger("rommate.cover").debug(
                                 "[cover] detail using movie path game_id=%s fmt=%s",
                                 self.game.get('id'),
                                 _fmt,
@@ -966,7 +967,7 @@ class GameDetailPanel(QWidget):
                     if pixmap and not pixmap.isNull():
                         self._stop_cover_animation_timer()
                         try:
-                            logging.getLogger("wingosy.cover").debug(
+                            logging.getLogger("rommate.cover").debug(
                                 "[cover] detail using static pixmap path game_id=%s",
                                 self.game.get('id'),
                             )
@@ -995,7 +996,7 @@ class GameDetailPanel(QWidget):
 
     def _set_cover_movie(self, raw, fmt=""):
         try:
-            log = logging.getLogger("wingosy.cover")
+            log = logging.getLogger("rommate.cover")
             self._stop_cover_animation_timer()
             try:
                 if self._cover_movie is not None:
@@ -1074,7 +1075,7 @@ class GameDetailPanel(QWidget):
                 pass
         except Exception:
             try:
-                logging.getLogger("wingosy.cover").exception("[cover] movie setup failed")
+                logging.getLogger("rommate.cover").exception("[cover] movie setup failed")
             except Exception:
                 pass
             self._render_placeholder()
@@ -1087,7 +1088,7 @@ class GameDetailPanel(QWidget):
 
     def _fallback_cover_movie_if_stalled(self, raw, fmt=""):
         try:
-            log = logging.getLogger("wingosy.cover")
+            log = logging.getLogger("rommate.cover")
             mv = getattr(self, "_cover_movie", None)
             if mv is None:
                 return
@@ -1163,7 +1164,7 @@ class GameDetailPanel(QWidget):
 
             if len(frames) < 2:
                 try:
-                    logging.getLogger("wingosy.cover").debug(
+                    logging.getLogger("rommate.cover").debug(
                         "[cover] pillow animation rejected frames=%s",
                         len(frames),
                     )
@@ -1180,7 +1181,7 @@ class GameDetailPanel(QWidget):
             self._cover_anim_timer = timer
             self._advance_cover_pillow_frame()
             try:
-                logging.getLogger("wingosy.cover").debug(
+                logging.getLogger("rommate.cover").debug(
                     "[cover] pillow animation ready frames=%s first_delay_ms=%s",
                     len(frames),
                     durations[0] if durations else 100,
@@ -1190,7 +1191,7 @@ class GameDetailPanel(QWidget):
             return True
         except Exception:
             try:
-                logging.getLogger("wingosy.cover").exception("[cover] pillow animation setup failed")
+                logging.getLogger("rommate.cover").exception("[cover] pillow animation setup failed")
             except Exception:
                 pass
             return False
@@ -1377,7 +1378,11 @@ class GameDetailPanel(QWidget):
         )
         if not players_val:
             players_val = rom.get("max_players") or md.get("max_players")
-        note_meta = rom.get("wingosy_metadata") if isinstance(rom.get("wingosy_metadata"), dict) else {}
+        note_meta = {}
+        if isinstance(rom.get("rommate_metadata"), dict):
+            note_meta = rom.get("rommate_metadata")
+        elif isinstance(rom.get("wingosy_metadata"), dict):
+            note_meta = rom.get("wingosy_metadata")
 
         playtime_val = note_meta.get("playtimeSeconds") if "playtimeSeconds" in note_meta else None
         if playtime_val is None:
@@ -1708,7 +1713,7 @@ class GameDetailPanel(QWidget):
         if rom_id is None:
             return None
         try:
-            cache_path = Path.home() / ".wingosy" / "sync_cache.json"
+            cache_path = preferred_existing_app_dir() / "sync_cache.json"
             if not cache_path.exists():
                 return None
             with open(cache_path, 'r', encoding='utf-8') as f:

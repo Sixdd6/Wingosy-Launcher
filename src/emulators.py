@@ -2,6 +2,7 @@ import json
 import os
 import logging
 from pathlib import Path
+from src.app_paths import primary_app_dir, preferred_existing_app_dir
 
 from src.platforms import RETROARCH_PLATFORMS
 
@@ -240,10 +241,22 @@ DEFAULT_EMULATORS = [
     }
 ]
 
-EMULATORS_FILE = Path.home() / ".wingosy" / "emulators.json"
+EMULATORS_FILE = primary_app_dir() / "emulators.json"
 
 def load_emulators_raw():
     """Load the full emulators.json content."""
+    if not EMULATORS_FILE.exists():
+        legacy_file = preferred_existing_app_dir() / "emulators.json"
+        if legacy_file.exists() and legacy_file != EMULATORS_FILE:
+            try:
+                EMULATORS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                with open(legacy_file, 'r', encoding='utf-8') as f:
+                    legacy_data = json.load(f)
+                with open(EMULATORS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(legacy_data, f, indent=4)
+            except Exception:
+                pass
+
     if not EMULATORS_FILE.exists():
         data = {"migration_done": False, "emulators": DEFAULT_EMULATORS}
         save_emulators_raw(data)

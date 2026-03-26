@@ -7,15 +7,15 @@ To test slow connection behavior:
    OR Run in plain HTTP mode with slow library simulation (300 ROMs, 5s per page):
        python tests/slow_https_server.py --http --slow-library
 
-2. In Wingosy settings, set host to:
+2. In Rom Mate settings, set host to:
        https://127.0.0.1:8443 (for HTTPS)
        http://127.0.0.1:8080 (for HTTP)
 
-3. Launch Wingosy and observe:
+3. Launch Rom Mate and observe:
    - Does the UI freeze or stay responsive?
    - Does the loading status label show progressive counts (e.g., 100/300)?
    - Do cards appear in batches?
-   - Check ~/.wingosy/app.log for performance info
+   - Check ~/.rommate/app.log for performance info
 """
 
 import http.server
@@ -63,7 +63,7 @@ def generate_self_signed_cert(cert_file, key_file):
         x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"CA"),
         x509.NameAttribute(NameOID.LOCALITY_NAME, u"San Francisco"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Wingosy Test"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Rom Mate Test"),
         x509.NameAttribute(NameOID.COMMON_NAME, u"127.0.0.1"),
     ])
     cert = x509.CertificateBuilder().subject_name(
@@ -183,7 +183,7 @@ def run_server():
         print(f"[{datetime.datetime.now()}] Starting threaded slow HTTP RomM server on http://127.0.0.1:{port}")
     else:
         port = 8443
-        temp_dir = tempfile.TemporaryDirectory(prefix="wingosy-test-tls-")
+        temp_dir = tempfile.TemporaryDirectory(prefix="rommate-test-tls-")
         cert_file = Path(temp_dir.name) / "test_cert.pem"
         key_file = Path(temp_dir.name) / "test_key.pem"
         

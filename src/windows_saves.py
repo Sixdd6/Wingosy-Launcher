@@ -1,19 +1,26 @@
 import json
 import logging
 from pathlib import Path
+from src.app_paths import primary_app_dir, preferred_existing_app_dir
 
-WINDOWS_SAVES_FILE = Path.home() / ".wingosy" / "windows_saves.json"
+WINDOWS_SAVES_FILE = primary_app_dir() / "windows_saves.json"
 
 def load_windows_saves():
     """Load Windows save configurations from JSON."""
-    if not WINDOWS_SAVES_FILE.exists():
-        return {}
-    try:
-        with open(WINDOWS_SAVES_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.error(f"Failed to load windows_saves.json: {e}")
-        return {}
+    candidates = [WINDOWS_SAVES_FILE]
+    legacy_file = preferred_existing_app_dir() / "windows_saves.json"
+    if legacy_file != WINDOWS_SAVES_FILE:
+        candidates.append(legacy_file)
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            with open(candidate, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Failed to load windows_saves.json from {candidate}: {e}")
+    return {}
 
 def save_windows_saves(data):
     """Save Windows save configurations to JSON."""
