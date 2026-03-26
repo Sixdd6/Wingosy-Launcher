@@ -2328,14 +2328,23 @@ class GameDetailPanel(QWidget):
             StyledMessageBox.critical(self, "Error — Rom Mate", str(e))
 
     def _launch_windows_exe(self, exe_path):
-        self.main_window.log(f"🚀 Launching Windows Game: {os.path.basename(exe_path)}")
-        ext = os.path.splitext(exe_path)[1].lower()
-        if ext in (".bat", ".cmd"):
-            proc = subprocess.Popen(["cmd.exe", "/c", exe_path], cwd=os.path.dirname(exe_path))
-        else:
-            proc = subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path))
-        if self.main_window.watcher:
-            self.main_window.watcher.track_session(proc, "Windows", self.game, exe_path, exe_path, skip_pull=True)
+        try:
+            normalized_exe_path = os.path.normpath(exe_path or "")
+            if not normalized_exe_path or not os.path.exists(normalized_exe_path):
+                StyledMessageBox.warning(self, "Error — Rom Mate", "Selected game executable was not found.")
+                return
+
+            self.main_window.log(f"🚀 Launching Windows Game: {os.path.basename(normalized_exe_path)}")
+            ext = os.path.splitext(normalized_exe_path)[1].lower()
+            if ext in (".bat", ".cmd"):
+                proc = subprocess.Popen(["cmd.exe", "/c", normalized_exe_path], cwd=os.path.dirname(normalized_exe_path))
+            else:
+                proc = subprocess.Popen([normalized_exe_path], cwd=os.path.dirname(normalized_exe_path))
+            if self.main_window.watcher:
+                self.main_window.watcher.track_session(proc, "Windows", self.game, normalized_exe_path, normalized_exe_path, skip_pull=True)
+        except Exception as e:
+            logging.exception("Failed to launch Windows game executable")
+            StyledMessageBox.critical(self, "Error — Rom Mate", str(e))
 
             
     def start_core_download(self, core_name, emu_dir, platform):

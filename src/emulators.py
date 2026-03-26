@@ -10,6 +10,164 @@ from src.platforms import RETROARCH_PLATFORMS
 def _unique_list(items):
     return list(dict.fromkeys(items))
 
+
+def _normalize_platform_slugs(raw_slugs):
+    if isinstance(raw_slugs, list):
+        return [str(s).strip() for s in raw_slugs if str(s).strip()]
+    if isinstance(raw_slugs, str):
+        slug = raw_slugs.strip()
+        return [slug] if slug else []
+    return []
+
+
+def _normalize_launch_args(raw_args, emulator_id):
+    if isinstance(raw_args, list):
+        values = [str(a) for a in raw_args if a is not None]
+    elif isinstance(raw_args, str):
+        values = [raw_args]
+    else:
+        values = []
+
+    if values:
+        return values
+
+    if emulator_id == "windows_native":
+        return []
+    return ["{rom_path}"]
+
+
+def _coerce_bool(value, default):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
+def _sanitize_emulator_entry(entry):
+    if not isinstance(entry, dict):
+        return None, True
+
+    changed = False
+    sanitized = dict(entry)
+
+    emu_id = sanitized.get("id")
+    if not isinstance(emu_id, str) or not emu_id.strip():
+        name = sanitized.get("name")
+        if isinstance(name, str) and name.strip():
+            sanitized["id"] = name.strip().lower().replace(" ", "_")
+            changed = True
+        else:
+            return None, True
+    else:
+        trimmed_id = emu_id.strip()
+        if trimmed_id != emu_id:
+            sanitized["id"] = trimmed_id
+            changed = True
+
+    emu_name = sanitized.get("name")
+    if not isinstance(emu_name, str) or not emu_name.strip():
+        sanitized["name"] = sanitized["id"]
+        changed = True
+    elif emu_name != emu_name.strip():
+        sanitized["name"] = emu_name.strip()
+        changed = True
+
+    exe_path = sanitized.get("executable_path")
+    normalized_path = exe_path.strip() if isinstance(exe_path, str) else ""
+    if normalized_path != exe_path:
+        sanitized["executable_path"] = normalized_path
+        changed = True
+
+    normalized_args = _normalize_launch_args(sanitized.get("launch_args"), sanitized["id"])
+    if sanitized.get("launch_args") != normalized_args:
+        sanitized["launch_args"] = normalized_args
+        changed = True
+
+    platform_slugs = _normalize_platform_slugs(sanitized.get("platform_slugs"))
+    if not platform_slugs:
+        single_slug = sanitized.get("platform_slug")
+        if isinstance(single_slug, str) and single_slug.strip():
+            platform_slugs = [single_slug.strip()]
+    platform_slugs = _unique_list(platform_slugs)
+    if sanitized.get("platform_slugs") != platform_slugs:
+        sanitized["platform_slugs"] = platform_slugs
+        changed = True
+
+    save_resolution = sanitized.get("save_resolution")
+    if not isinstance(save_resolution, dict):
+        sanitized["save_resolution"] = {"mode": "none"}
+        changed = True
+
+    user_defined = _coerce_bool(sanitized.get("user_defined", False), False)
+    if sanitized.get("user_defined") is not user_defined:
+        sanitized["user_defined"] = user_defined
+        changed = True
+
+    sync_enabled = _coerce_bool(sanitized.get("sync_enabled", True), True)
+    if sanitized.get("sync_enabled") is not sync_enabled:
+        sanitized["sync_enabled"] = sync_enabled
+        changed = True
+
+    conflict_behavior = sanitized.get("conflict_behavior")
+    if not isinstance(conflict_behavior, str) or not conflict_behavior.strip():
+        sanitized["conflict_behavior"] = "ask"
+        changed = True
+
+    return sanitized, changed
+
+
+def _sanitize_emulators_payload(data):
+    if not isinstance(data, dict):
+        data = {}
+
+    changed = False
+    migration_done = data.get("migration_done", False)
+    if not isinstance(migration_done, bool):
+        migration_done = bool(migration_done)
+        changed = True
+    if "migration_done" not in data:
+        changed = True
+    data["migration_done"] = migration_done
+
+    emulators_value = data.get("emulators", [])
+    if not isinstance(emulators_value, list):
+        emulators_value = []
+        changed = True
+
+    sanitized_emulators = []
+    seen_ids = set()
+    for entry in emulators_value:
+        sanitized_entry, entry_changed = _sanitize_emulator_entry(entry)
+        if sanitized_entry is None:
+            changed = True
+            continue
+
+        emu_id = sanitized_entry["id"]
+        if emu_id in seen_ids:
+            logging.warning(f"Dropping duplicate emulator id during sanitize: {emu_id}")
+            changed = True
+            continue
+
+        seen_ids.add(emu_id)
+        sanitized_emulators.append(sanitized_entry)
+        if entry_changed:
+            changed = True
+
+    if data.get("emulators") != sanitized_emulators:
+        data["emulators"] = sanitized_emulators
+        changed = True
+
+    return data, changed
+
 DEFAULT_EMULATORS = [
     {
         "id": "retroarch",
@@ -265,6 +423,7 @@ def load_emulators_raw():
     try:
         with open(EMULATORS_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
+            data, changed = _sanitize_emulators_payload(data)
             
             # Filter out deprecated emulators (Yuzu)
             emus = data.get("emulators", [])
@@ -277,7 +436,7 @@ def load_emulators_raw():
                 )
             ]
             
-            changed = len(data["emulators"]) < initial_count
+            changed = changed or (len(data["emulators"]) < initial_count)
             if changed:
                 logging.info("Removed deprecated entries from emulators")
             

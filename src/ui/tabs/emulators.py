@@ -22,6 +22,23 @@ def _normalize_launch_args_for_display(raw_args, default="{rom_path}"):
     return [default]
 
 
+def _normalize_platform_slugs(raw_slugs):
+    if isinstance(raw_slugs, list):
+        return [str(s).strip() for s in raw_slugs if str(s).strip()]
+    if isinstance(raw_slugs, str):
+        slug = raw_slugs.strip()
+        return [slug] if slug else []
+    return []
+
+
+def _to_text(value, default=""):
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 class EmulatorSettingsDialog(QDialog):
     def __init__(self, main_window, emulator_id, parent=None):
         super().__init__(parent)
@@ -42,12 +59,14 @@ class EmulatorSettingsDialog(QDialog):
 
         layout.addWidget(QLabel("<h3>Selected Emulator</h3>"))
         selected_emu = self._selected_emulator()
-        self.emulator_name_label = QLabel(selected_emu.get("name", "Unknown Emulator") if selected_emu else "Unknown Emulator")
+        selected_name = _to_text(selected_emu.get("name"), "Unknown Emulator") if selected_emu else "Unknown Emulator"
+        self.emulator_name_label = QLabel(selected_name)
         self.emulator_name_label.setStyleSheet("color: #ddd; font-size: 13px;")
         layout.addWidget(self.emulator_name_label)
 
         exe_row = QHBoxLayout()
-        self.executable_input = QLineEdit(selected_emu.get("executable_path", "") if selected_emu else "")
+        selected_path = _to_text(selected_emu.get("executable_path"), "") if selected_emu else ""
+        self.executable_input = QLineEdit(selected_path)
         self.executable_input.setPlaceholderText("C:/Path/to/emulator.exe")
         exe_row.addWidget(self.executable_input, 1)
         self.browse_emulator_btn = QPushButton("Browse")
@@ -79,7 +98,10 @@ class EmulatorSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _selected_emulator(self):
-        all_emus = [e for e in emulators.load_emulators() if e.get("id") != "windows_native"]
+        all_emus = [
+            e for e in emulators.load_emulators()
+            if isinstance(e, dict) and e.get("id") != "windows_native"
+        ]
         return next((e for e in all_emus if e.get("id") == self.emulator_id), None)
 
     def browse_selected_emulator(self):
@@ -88,9 +110,10 @@ class EmulatorSettingsDialog(QDialog):
             StyledMessageBox.warning(self, "No Emulator", "No emulator is available to configure.")
             return
 
-        start_dir = os.path.dirname(self.executable_input.text().strip() or emu.get("executable_path") or "")
+        selected_path = _to_text(emu.get("executable_path"), "")
+        start_dir = os.path.dirname(self.executable_input.text().strip() or selected_path)
         if not start_dir or not os.path.exists(start_dir):
-            start_dir = os.path.dirname(emu.get("executable_path") or "")
+            start_dir = os.path.dirname(selected_path)
 
         file_path, _ = QFileDialog.getOpenFileName(self, f"Select {emu.get('name', 'Emulator')} Executable", start_dir, "Executables (*.exe)")
         if not file_path:
@@ -193,7 +216,9 @@ class EmulatorEditDialog(QDialog):
         self.mode_combo.addItem("Folder Sync (zip entire folder)", "folder")
         self.mode_combo.addItem("No Save Sync", "none")
 
-        save_res = emu_data.get("save_resolution", {}) if emu_data else {}  
+        save_res = emu_data.get("save_resolution") if emu_data else {}
+        if not isinstance(save_res, dict):
+            save_res = {}
         mode = save_res.get("mode", "none")
         idx = self.mode_combo.findData(mode)
         if idx >= 0: self.mode_combo.setCurrentIndex(idx)
@@ -289,7 +314,7 @@ class EmulatorEditDialog(QDialog):
 
         if not self.emu_data:
             all_emus = emulators.load_emulators()
-            existing = next((e for e in all_emus if e["id"] == emu_id), None)
+            existing = next((e for e in all_emus if e.get("id") == emu_id), None)
             if existing and not existing.get("user_defined"):
                 StyledMessageBox.warning(self, "Error", "Cannot overwrite a built-in emulator. Choose a different name.")
                 return
@@ -377,14 +402,17 @@ class EmuListWidget(QWidget):
         self.populate_emus()
 
     def open_settings_dialog(self, emu_id):
-        dialog = EmulatorSettingsDialog(self.main_window, emu_id, self)
-        if dialog.exec() == QDialog.Accepted:
-            try:
-                self.main_window.emulators_tab.refresh_all()
-                self.main_window.library_tab.apply_filters()
-            except Exception as e:
-                logging.exception("Failed to refresh UI after emulator settings save")
-                StyledMessageBox.warning(self, "Refresh Failed", f"Settings were saved, but the UI refresh encountered an error:\n{e}")
+        try:
+            dialog = EmulatorSettingsDialog(self.main_window, emu_id, self)
+            if dialog.exec() == QDialog.Accepted:
+                try:
+                    self.main_window.emulators_tab.refresh_all()
+                except Exception as e:
+                    logging.exception("Failed to refresh UI after emulator settings save")
+                    StyledMessageBox.warning(self, "Refresh Failed", f"Settings were saved, but the UI refresh encountered an error:\n{e}")
+        except Exception as e:
+            logging.exception("Failed to open emulator settings dialog")
+            StyledMessageBox.warning(self, "Open Settings Failed", f"Could not open emulator settings:\n{e}")
 
     def populate_emus(self):
         for i in reversed(range(self.emu_list_layout.count())):
@@ -394,10 +422,13 @@ class EmuListWidget(QWidget):
 
         all_emus = emulators.load_emulators()
         for emu_data in all_emus:
+            if not isinstance(emu_data, dict):
+                continue
+
             emu_id = emu_data.get("id")
             if emu_id == "windows_native":
                 continue
-            name = emu_data.get("name")
+            name = emu_data.get("name") or emu_id or "Unknown Emulator"
             is_user = emu_data.get("user_defined", False)
 
             row = QWidget()
@@ -452,7 +483,7 @@ class EmuListWidget(QWidget):
     def edit_custom_emulator(self, emu_id):
         try:
             all_emus = emulators.load_emulators()
-            emu_idx = next((i for i, e in enumerate(all_emus) if e["id"] == emu_id), -1)
+            emu_idx = next((i for i, e in enumerate(all_emus) if e.get("id") == emu_id), -1)
             if emu_idx == -1:
                 return
             dialog = EmulatorEditDialog(emu_data=all_emus[emu_idx], parent=self)
@@ -469,12 +500,12 @@ class EmuListWidget(QWidget):
     def remove_emulator(self, emu_id):
         try:
             all_emus = emulators.load_emulators()
-            emu = next((e for e in all_emus if e["id"] == emu_id), None)
+            emu = next((e for e in all_emus if e.get("id") == emu_id), None)
             if not emu:
                 return
             reply = StyledMessageBox.question(self, "Remove Emulator", f"Are you sure you want to remove {emu['name']}?", StyledMessageBox.Yes | StyledMessageBox.No)
             if reply == StyledMessageBox.Yes:
-                all_emus = [e for e in all_emus if e["id"] != emu_id]
+                all_emus = [e for e in all_emus if e.get("id") != emu_id]
                 emulators.save_emulators(all_emus)
                 self.main_window.log(f"🗑 Removed emulator: {emu['name']}")
                 self.populate_emus()
@@ -519,10 +550,20 @@ class PlatformAssignWidget(QWidget):
 
         all_emus = emulators.load_emulators()
         assignments = self.config.get("platform_assignments", {})
+        if not isinstance(assignments, dict):
+            assignments = {}
         for slug in platforms:
             combo = QComboBox()
-            matching_emus = [e for e in all_emus if slug in e.get("platform_slugs", [])]
-            for emu in matching_emus: combo.addItem(emu["name"], emu["id"]) 
+            matching_emus = [
+                e for e in all_emus
+                if isinstance(e, dict) and slug in _normalize_platform_slugs(e.get("platform_slugs"))
+            ]
+            for emu in matching_emus:
+                emu_id = emu.get("id")
+                if not emu_id:
+                    continue
+                emu_name = emu.get("name") or emu_id
+                combo.addItem(emu_name, emu_id)
             assigned_id = assignments.get(slug)
             if assigned_id:
                 idx = combo.findData(assigned_id)
@@ -547,8 +588,10 @@ class PlatformAssignWidget(QWidget):
 
     def save_assignment(self, platform_slug, emu_id):
         all_emus = emulators.load_emulators()
-        emu = next((e for e in all_emus if e["id"] == emu_id), None)        
+        emu = next((e for e in all_emus if e.get("id") == emu_id), None)
         assignments = self.config.get("platform_assignments", {})
+        if not isinstance(assignments, dict):
+            assignments = {}
         assignments[platform_slug] = emu_id
         self.config.set("platform_assignments", assignments)
         self.main_window.log(f"🕹 {platform_slug.upper()} assigned to {emu['name'] if emu else emu_id}")

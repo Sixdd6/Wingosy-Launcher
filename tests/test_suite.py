@@ -6,6 +6,7 @@ Run with logs: pytest tests/ -v -s
 import pytest
 import sys
 import os
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -824,6 +825,78 @@ class TestEmulatorSchema:
         for emu in emus:
             assert "yuzu" not in emu["id"].lower()
             assert "yuzu" not in emu["name"].lower()
+
+    def test_startup_sanitizer_normalizes_malformed_entries(self):
+        payload = {
+            "migration_done": "yes",
+            "emulators": [
+                None,
+                "bad-entry",
+                {
+                    "id": "  custom_one  ",
+                    "name": " Custom One ",
+                    "executable_path": None,
+                    "launch_args": None,
+                    "platform_slugs": "psx",
+                    "save_resolution": None,
+                    "user_defined": "true",
+                    "sync_enabled": "false",
+                    "conflict_behavior": ""
+                },
+                {
+                    "name": "No Id Emulator",
+                    "platform_slug": "gba",
+                    "launch_args": "{rom_path}"
+                },
+                {
+                    "id": "dup",
+                    "name": "Dup A",
+                    "platform_slugs": ["snes"]
+                },
+                {
+                    "id": "dup",
+                    "name": "Dup B",
+                    "platform_slugs": ["nes"]
+                }
+            ]
+        }
+        self.emulators.EMULATORS_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
+        data = self.emulators.load_emulators_raw()
+        emus = data["emulators"]
+
+        assert data["migration_done"] is True
+        assert isinstance(emus, list)
+
+        custom_one = next((e for e in emus if e["id"] == "custom_one"), None)
+        assert custom_one is not None
+        assert custom_one["name"] == "Custom One"
+        assert custom_one["executable_path"] == ""
+        assert custom_one["launch_args"] == ["{rom_path}"]
+        assert custom_one["platform_slugs"] == ["psx"]
+        assert custom_one["save_resolution"]["mode"] == "none"
+        assert custom_one["user_defined"] is True
+        assert custom_one["sync_enabled"] is False
+        assert custom_one["conflict_behavior"] == "ask"
+
+        no_id = next((e for e in emus if e["id"] == "no_id_emulator"), None)
+        assert no_id is not None
+        assert no_id["platform_slugs"] == ["gba"]
+
+        dup_ids = [e for e in emus if e["id"] == "dup"]
+        assert len(dup_ids) == 1
+
+    def test_startup_sanitizer_handles_non_list_emulators(self):
+        payload = {
+            "migration_done": False,
+            "emulators": "not-a-list"
+        }
+        self.emulators.EMULATORS_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
+        data = self.emulators.load_emulators_raw()
+        emus = data["emulators"]
+        assert isinstance(emus, list)
+        assert len(emus) > 0
 
 
 class TestCloudSaveProbeThread:
