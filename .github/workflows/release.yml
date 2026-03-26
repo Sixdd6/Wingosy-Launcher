@@ -28,23 +28,33 @@ jobs:
           pip install --upgrade setuptools wheel
           pip install --upgrade --upgrade-strategy eager -r requirements.txt
           pip check
+
+      - name: Get app version
+        id: app_version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path main.py -Pattern '^\s*VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          if (-not $version) {
+            throw "Could not determine VERSION from main.py"
+          }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           
       - name: Build EXE
         run: |
           # Pillow is now installed, so PyInstaller can convert icon.png to .ico automatically
-          pyinstaller --noconsole --onefile --name RomMate --icon "assets/icon.png" --add-data "assets;assets" --hidden-import sqlite3 --hidden-import src.ui --hidden-import src.ui.main_window --hidden-import src.ui.dialogs --hidden-import src.ui.threads --hidden-import src.ui.widgets --hidden-import src.ui.tabs --hidden-import src.ui.tabs.library --hidden-import src.ui.tabs.emulators main.py
+          pyinstaller --noconsole --onefile --name RomMate-v${{ steps.app_version.outputs.value }} --icon "assets/icon.png" --add-data "assets;assets" --hidden-import sqlite3 --hidden-import src.ui --hidden-import src.ui.main_window --hidden-import src.ui.dialogs --hidden-import src.ui.threads --hidden-import src.ui.widgets --hidden-import src.ui.tabs --hidden-import src.ui.tabs.library --hidden-import src.ui.tabs.emulators main.py
 
       - name: Upload build artifact
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: RomMate
-          path: dist/RomMate.exe
+          name: RomMate-v${{ steps.app_version.outputs.value }}
+          path: dist/RomMate-v${{ steps.app_version.outputs.value }}.exe
           
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/RomMate.exe
+          files: dist/RomMate-v${{ steps.app_version.outputs.value }}.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

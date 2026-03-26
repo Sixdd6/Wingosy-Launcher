@@ -312,7 +312,6 @@ class RomMClient:
 
                     if local_meta is not None and isinstance(rom_data, dict):
                         rom_data["rommate_metadata"] = local_meta
-                        rom_data["wingosy_metadata"] = local_meta
 
                         local_playtime = local_meta.get("playtimeSeconds")
                         if local_playtime is not None:
@@ -364,7 +363,7 @@ class RomMClient:
         if not isinstance(payload, dict):
             return None
 
-        meta = payload.get("rommate_metadata") if isinstance(payload.get("rommate_metadata"), dict) else payload.get("wingosy_metadata")
+        meta = payload.get("rommate_metadata")
         if not isinstance(meta, dict):
             return None
 
@@ -396,7 +395,6 @@ class RomMClient:
 
         return {
             "rommate_metadata": metadata,
-            "wingosy_metadata": metadata,
         }
 
     def _metadata_file_path(self, rom_id):
@@ -430,12 +428,7 @@ class RomMClient:
         if not isinstance(payload, dict):
             return None
 
-        if isinstance(payload.get("rommate_metadata"), dict):
-            meta = payload.get("rommate_metadata")
-        elif isinstance(payload.get("wingosy_metadata"), dict):
-            meta = payload.get("wingosy_metadata")
-        else:
-            meta = payload
+        meta = payload.get("rommate_metadata")
         if not isinstance(meta, dict):
             return None
 

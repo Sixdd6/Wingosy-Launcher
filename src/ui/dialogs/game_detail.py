@@ -1381,8 +1381,6 @@ class GameDetailPanel(QWidget):
         note_meta = {}
         if isinstance(rom.get("rommate_metadata"), dict):
             note_meta = rom.get("rommate_metadata")
-        elif isinstance(rom.get("wingosy_metadata"), dict):
-            note_meta = rom.get("wingosy_metadata")
 
         playtime_val = note_meta.get("playtimeSeconds") if "playtimeSeconds" in note_meta else None
         if playtime_val is None:
