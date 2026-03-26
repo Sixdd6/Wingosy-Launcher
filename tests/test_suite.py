@@ -33,8 +33,8 @@ class TestImports:
         assert ConfigManager
 
     def test_watcher_imports(self):
-        from src.watcher import WingosyWatcher
-        assert WingosyWatcher
+        from src.watcher import RomMateWatcher
+        assert RomMateWatcher
 
     def test_platforms_imports(self):
         from src.platforms import (RETROARCH_PLATFORMS, RETROARCH_CORES,
@@ -385,9 +385,9 @@ class TestSavePathResolution:
         DummyRomMClient.GAME_COUNT = 10
         client = DummyRomMClient()
         self.config = ConfigManager()
-        from src.watcher import WingosyWatcher
+        from src.watcher import RomMateWatcher
         # Create watcher without starting the thread
-        self.watcher = WingosyWatcher.__new__(WingosyWatcher)
+        self.watcher = RomMateWatcher.__new__(RomMateWatcher)
         self.watcher.client = client
         self.watcher.config = self.config
         self.watcher._sync_threads = []
@@ -638,11 +638,11 @@ class TestWatcherResilience:
     def setup_method(self):
         from tests.dummy import DummyRomMClient
         from src.config import ConfigManager
-        from src.watcher import WingosyWatcher
+        from src.watcher import RomMateWatcher
         self.client = DummyRomMClient()
         self.config = ConfigManager()
         # Create watcher without starting thread
-        self.watcher = WingosyWatcher.__new__(WingosyWatcher)
+        self.watcher = RomMateWatcher.__new__(RomMateWatcher)
         self.watcher.client = self.client
         self.watcher.config = self.config
         self.watcher.session_errors = {}

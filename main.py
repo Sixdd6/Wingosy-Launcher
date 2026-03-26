@@ -58,8 +58,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, Q
 from PySide6.QtCore import QTimer, QThread, Signal, Slot, Qt
 from src.config import ConfigManager
 from src.api import RomMClient
-from src.watcher import WingosyWatcher
-from src.ui import WingosyMainWindow, SetupDialog
+from src.watcher import RomMateWatcher
+from src.ui import RomMateMainWindow, SetupDialog
 
 VERSION = "0.6.5"
 
@@ -271,7 +271,7 @@ def main():
                 sys.exit(0)
 
         def _on_ready(config, client):
-            window = WingosyMainWindow(config, client, WingosyWatcher, VERSION)
+            window = RomMateMainWindow(config, client, RomMateWatcher, VERSION)
             state["window"] = window
             try:
                 app.aboutToQuit.connect(window._shutdown_threads)

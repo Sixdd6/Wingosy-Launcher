@@ -181,7 +181,7 @@ class PostSessionSyncThread(QThread):
             self.notify.emit("Rom Mate", f"❌ Sync error: {title}")
             self.done.emit(title, False)
 
-class WingosyWatcher(QThread):
+class RomMateWatcher(QThread):
     log_signal = Signal(str)
     path_detected_signal = Signal(str, str) # emu_display_name, path
     conflict_signal = Signal(str, str, str, str) # title, local_path, temp_dl, rom_id

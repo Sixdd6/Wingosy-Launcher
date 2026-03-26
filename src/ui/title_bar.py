@@ -6,7 +6,7 @@ from PySide6.QtCore import Signal, Slot, QTimer
 
 from src.ui.widgets import get_resource_path
 
-class WingosyTitleBar(QWidget):
+class RomMateTitleBar(QWidget):
     tab_changed = Signal(int)
     settings_requested = Signal()
 
@@ -101,7 +101,7 @@ class WingosyTitleBar(QWidget):
         self.layout.addWidget(self.close_btn)
 
         self.setStyleSheet("""
-            WingosyTitleBar {
+            RomMateTitleBar {
                 background: #1a1a1a;
                 border-bottom: 1px solid #2d2d2d;
             }

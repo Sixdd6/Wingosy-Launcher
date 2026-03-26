@@ -62,9 +62,9 @@ class LibraryFetchWorker(QThread):
         # Final result emission (used for final cache and cleanup)
         self.finished.emit(result)
 
-from src.ui.title_bar import WingosyTitleBar
+from src.ui.title_bar import RomMateTitleBar
 
-class WingosyMainWindow(QMainWindow):
+class RomMateMainWindow(QMainWindow):
     startup_ready = Signal()
     initial_library_ready = Signal(bool)
 
@@ -178,7 +178,7 @@ class WingosyMainWindow(QMainWindow):
         main_layout.setSpacing(0)
 
         # Custom Title Bar
-        self.title_bar = WingosyTitleBar(self)
+        self.title_bar = RomMateTitleBar(self)
         self.title_bar.tab_changed.connect(self._on_tab_changed)
         main_layout.addWidget(self.title_bar)
         self.title_bar.set_maximized(self.isMaximized())
