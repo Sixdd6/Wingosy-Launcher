@@ -639,6 +639,11 @@ class LibraryTab(QWidget):
         self._cloud_probe_pending = set()
         self._cloud_probe_backlog = []
         self._cloud_probe_activity_visible = False
+        self._cloud_probe_cache_dirty = False
+        self._cloud_probe_cache_flush_timer = QTimer(self)
+        self._cloud_probe_cache_flush_timer.setSingleShot(True)
+        self._cloud_probe_cache_flush_timer.setInterval(500)
+        self._cloud_probe_cache_flush_timer.timeout.connect(self._flush_cloud_probe_cache)
 
         self._scroll_debounce = QTimer()
         self._scroll_debounce.setSingleShot(True)
@@ -929,6 +934,44 @@ class LibraryTab(QWidget):
 
         self._start_cloud_probe_thread(ids)
 
+    @Slot(int)
+    def request_cloud_probe_for_rom(self, rom_id):
+        try:
+            rid_int = int(rom_id)
+        except Exception:
+            return
+
+        rid_str = str(rid_int)
+        try:
+            watcher = getattr(self.main_window, 'watcher', None)
+        except Exception:
+            watcher = None
+
+        if watcher and isinstance(getattr(watcher, 'sync_cache', None), dict):
+            entry = watcher.sync_cache.get(rid_str)
+            if not isinstance(entry, dict):
+                entry = {}
+            entry.pop('cloud_probe_checked_at', None)
+            entry.pop('cloud_probe_failed', None)
+            watcher.sync_cache[rid_str] = entry
+            self._schedule_cloud_probe_cache_flush()
+
+        try:
+            self._cloud_probe_pending.add(rid_str)
+        except Exception:
+            return
+
+        try:
+            t = getattr(self, '_cloud_probe_thread', None)
+            if t and t.isRunning():
+                if rid_int not in self._cloud_probe_backlog:
+                    self._cloud_probe_backlog.append(rid_int)
+                return
+        except Exception:
+            pass
+
+        self._start_cloud_probe_thread([rid_int])
+
     def _set_cloud_probe_activity(self, active):
         try:
             active = bool(active)
@@ -948,7 +991,10 @@ class LibraryTab(QWidget):
             self._cloud_probe_activity_visible = False
             try:
                 if hasattr(self.main_window, 'title_bar'):
-                    self.main_window.title_bar.clear_activity()
+                    if hasattr(self.main_window, '_clear_upload_status'):
+                        self.main_window._clear_upload_status()
+                    else:
+                        self.main_window.title_bar.clear_activity()
             except Exception:
                 pass
         except Exception:
@@ -966,6 +1012,28 @@ class LibraryTab(QWidget):
         except Exception:
             self._set_cloud_probe_activity(False)
             return
+
+    def _schedule_cloud_probe_cache_flush(self):
+        self._cloud_probe_cache_dirty = True
+        try:
+            if not self._cloud_probe_cache_flush_timer.isActive():
+                self._cloud_probe_cache_flush_timer.start()
+        except Exception:
+            pass
+
+    def _flush_cloud_probe_cache(self):
+        if not self._cloud_probe_cache_dirty:
+            return
+        self._cloud_probe_cache_dirty = False
+        try:
+            watcher = getattr(self.main_window, 'watcher', None)
+        except Exception:
+            watcher = None
+        if watcher and isinstance(getattr(watcher, 'sync_cache', None), dict):
+            try:
+                watcher.save_cache()
+            except Exception:
+                pass
 
     @Slot()
     def _on_cloud_probe_thread_finished(self):
@@ -985,6 +1053,7 @@ class LibraryTab(QWidget):
             self._start_cloud_probe_thread(backlog_ids)
             return
 
+        self._flush_cloud_probe_cache()
         self._set_cloud_probe_activity(False)
 
     @Slot(int, object)
@@ -1008,10 +1077,7 @@ class LibraryTab(QWidget):
                 entry['cloud_probe_checked_at'] = time.time()
                 entry['cloud_probe_failed'] = True
                 watcher.sync_cache[rid_str] = entry
-                try:
-                    watcher.save_cache()
-                except Exception:
-                    pass
+                self._schedule_cloud_probe_cache_flush()
                 return
 
             has_cloud_save = bool(probe_payload.get("has_cloud_save"))
@@ -1032,10 +1098,7 @@ class LibraryTab(QWidget):
                 entry.pop('state_updated_at', None)
 
             watcher.sync_cache[rid_str] = entry
-            try:
-                watcher.save_cache()
-            except Exception:
-                pass
+            self._schedule_cloud_probe_cache_flush()
 
             try:
                 if hasattr(watcher, 'sync_cache_updated_signal'):

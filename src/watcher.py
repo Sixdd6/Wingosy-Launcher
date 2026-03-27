@@ -27,7 +27,7 @@ def _slot_has_prefix(slot, prefixes):
     return any(value.startswith(prefix) for prefix in prefixes)
 
 class PostSessionSyncThread(QThread):
-    done = Signal(str, bool)   # rom_name, success
+    done = Signal(str, bool, int)   # rom_name, success, uploaded_count
     log  = Signal(str)         # log message for GUI
     notify = Signal(str, str)  # title, body for tray notification
 
@@ -50,12 +50,15 @@ class PostSessionSyncThread(QThread):
 
         try:
             logging.info(f"[SyncThread] Starting sync for {title}")
+            if self.isInterruptionRequested():
+                self.done.emit(title, False, 0)
+                return
             save_files = strategy.get_save_files(rom)
 
             if not save_files:
                 logging.warning(f"[SyncThread] No save files found for {title} (emu={emu_id}, strategy={strategy_name})")
                 self.log.emit(f"💤 No saves found for {title}, skipping upload")
-                self.done.emit(title, True)
+                self.done.emit(title, True, 0)
                 return
 
             # Change detection inside thread
@@ -75,7 +78,7 @@ class PostSessionSyncThread(QThread):
                 if not cloud_missing:
                     logging.info(f"[SyncThread] No changes detected in files for {title}, skipping upload")
                     self.log.emit(f"💤 No changes in {title}. Skipping sync.")
-                    self.done.emit(title, True)
+                    self.done.emit(title, True, 0)
                     return
                 
                 self.log.emit(f"☁️ No Rom Mate cloud save found for {title}, uploading...")
@@ -97,6 +100,9 @@ class PostSessionSyncThread(QThread):
             ts = time.strftime("_%Y-%m-%d_%H-%M")
 
             if folder_files:
+                if self.isInterruptionRequested():
+                    self.done.emit(title, False, uploaded_count)
+                    return
                 # Folder (e.g. PSP SAVEDATA) — zip and upload as save
                 save_dir = folder_files[0]
                 temp_zip = self.watcher.tmp_dir / f"upload_{rom_id}.zip"
@@ -113,6 +119,9 @@ class PostSessionSyncThread(QThread):
                 ok = ok and ok2
 
             if ps2_files:
+                if self.isInterruptionRequested():
+                    self.done.emit(title, False, uploaded_count)
+                    return
                 # PS2 Memory Cards — zip all .ps2 files together and upload as one save
                 temp_zip = self.watcher.tmp_dir / f"ps2_upload_{rom_id}.zip"
                 temp_zip.parent.mkdir(parents=True, exist_ok=True)
@@ -130,6 +139,9 @@ class PostSessionSyncThread(QThread):
                 ok = ok and ok2
 
             for save_file in regular_save_files:
+                if self.isInterruptionRequested():
+                    self.done.emit(title, False, uploaded_count)
+                    return
                 fname = f"{save_file.stem}{ts}{save_file.suffix}"
                 slot_name = f"{SAVE_SLOT_PREFIX}{ts}"
                 logging.info(f"[SyncThread] Uploading SRM: slot={slot_name}, filename={fname}")
@@ -139,6 +151,9 @@ class PostSessionSyncThread(QThread):
                 ok = ok and ok2
 
             for st in state_files:
+                if self.isInterruptionRequested():
+                    self.done.emit(title, False, uploaded_count)
+                    return
                 fname = f"{st.stem}{ts}{st.suffix}"
                 slot_name = f"{STATE_SLOT_PREFIX}{ts}"
                 logging.info(f"[SyncThread] Uploading state: slot={slot_name}, filename={fname}")
@@ -146,6 +161,16 @@ class PostSessionSyncThread(QThread):
                 if ok2:
                     uploaded_count += 1
                 ok = ok and ok2
+
+            if ok and uploaded_count > 0:
+                try:
+                    self.watcher.upload_status_signal.emit(f"Save uploaded: {title}", 10000)
+                except Exception:
+                    pass
+                try:
+                    self.watcher.cloud_probe_request_signal.emit(int(self.rom_id))
+                except Exception:
+                    pass
 
             # Prune old versions if successful
             if ok and uploaded_count > 0:
@@ -183,14 +208,14 @@ class PostSessionSyncThread(QThread):
                 self.log.emit(f"❌ Sync failed: {title}")
                 self.notify.emit("Rom Mate", f"❌ Sync failed: {title}")
             
-            self.done.emit(title, ok)
+            self.done.emit(title, ok, uploaded_count)
 
         except Exception as e:
             logging.error(f"[SyncThread] Error for {title}: {e}")
             traceback.print_exc()
             self.log.emit(f"❌ Sync error for {title}: {e}")
             self.notify.emit("Rom Mate", f"❌ Sync error: {title}")
-            self.done.emit(title, False)
+            self.done.emit(title, False, 0)
 
 class RomMateWatcher(QThread):
     log_signal = Signal(str)
@@ -200,6 +225,8 @@ class RomMateWatcher(QThread):
     playtime_updated_signal = Signal(int, int) # rom_id, total_playtime_seconds
     last_played_updated_signal = Signal(int, str) # rom_id, last_played_iso
     sync_cache_updated_signal = Signal(int) # rom_id
+    upload_status_signal = Signal(str, int) # status_text, auto_clear_ms
+    cloud_probe_request_signal = Signal(int) # rom_id
 
     def __init__(self, client, config):
         super().__init__()
@@ -210,6 +237,7 @@ class RomMateWatcher(QThread):
         self.session_errors = {} # rom_id -> consecutive error count
         self.skip_next_pull_rom_id = None # Flag to prevent double-pull when launching from app
         self._sync_threads = []
+        self._sync_inflight_rom_ids = set()
         self._active_conflicts = set()
 
         self.app_dir = primary_app_dir()
@@ -491,12 +519,22 @@ class RomMateWatcher(QThread):
     def handle_exit(self, data):
         title, rom_id, strategy, rom, emu = data['title'], data['rom_id'], data['strategy'], data['game_data'], data['emulator']
 
-        if not emu.get("sync_enabled", True):
-            logging.info(f"[Watcher] Sync disabled for {emu['name']}, skipping upload for {title}")
+        if not isinstance(getattr(self, 'sync_cache', None), dict):
+            self.sync_cache = {}
+        if not isinstance(getattr(self, 'session_errors', None), dict):
+            self.session_errors = {}
+        if not isinstance(getattr(self, '_sync_inflight_rom_ids', None), set):
+            self._sync_inflight_rom_ids = set()
+        if not isinstance(getattr(self, '_sync_threads', None), list):
+            self._sync_threads = []
+
+        rom_id_str = str(rom_id)
+        if self.session_errors.get(rom_id_str, 0) >= 5:
+            logging.warning(f"[Watcher] Giving up on save sync for {title} after 5 consecutive errors")
             return
 
-        if rom_id and self.session_errors.get(str(rom_id), 0) >= 5:
-            logging.warning(f"[Watcher] Giving up on save sync for {title} after 5 consecutive errors")
+        if not emu.get("sync_enabled", True):
+            logging.info(f"[Watcher] Sync disabled for {emu['name']}, skipping upload for {title}")
             return
 
         self.log_signal.emit(f"🛑 Session Ended: {title}")
@@ -545,20 +583,32 @@ class RomMateWatcher(QThread):
 
         self.log_signal.emit(f"📤 Syncing {title} in background...")
 
+        if rom_id_str in self._sync_inflight_rom_ids:
+            self.log_signal.emit(f"⏳ Sync already in progress for {title}; reusing active sync")
+            self._update_playtime(data)
+            return
+
+        try:
+            self.upload_status_signal.emit(f"Uploading save: {title}", 0)
+        except Exception:
+            pass
+
         # Start background sync thread — upload happens entirely in the thread
         thread = PostSessionSyncThread(self, data, new_m=new_m)
         thread.log.connect(self.log_signal)
         thread.notify.connect(self.notify_signal)
-        thread.done.connect(lambda name, ok: self._on_sync_thread_done(str(rom_id), new_m, ok))
+        thread.done.connect(lambda name, ok, uploaded_count: self._on_sync_thread_done(str(rom_id), new_m, ok, uploaded_count, name))
 
+        self._sync_inflight_rom_ids.add(rom_id_str)
         self._sync_threads.append(thread)
         thread.finished.connect(lambda t=thread: self._sync_threads.remove(t) if t in self._sync_threads else None)
         thread.start()
         
         self._update_playtime(data)
 
-    def _on_sync_thread_done(self, rom_id, new_m, success):
+    def _on_sync_thread_done(self, rom_id, new_m, success, uploaded_count=0, title=""):
         rom_id_str = str(rom_id)
+        self._sync_inflight_rom_ids.discard(rom_id_str)
         if success:
             self.session_errors[rom_id_str] = 0
             entry = self.sync_cache.get(rom_id_str, {})
@@ -586,8 +636,26 @@ class RomMateWatcher(QThread):
                 self.sync_cache_updated_signal.emit(int(rom_id))
             except Exception:
                 pass
+
+            if int(uploaded_count or 0) > 0:
+                try:
+                    self.cloud_probe_request_signal.emit(int(rom_id))
+                except Exception:
+                    pass
+
+            try:
+                if int(uploaded_count or 0) > 0:
+                    self.upload_status_signal.emit(f"Save uploaded: {title or rom_id_str}", 10000)
+                else:
+                    self.upload_status_signal.emit(f"No save changes: {title or rom_id_str}", 10000)
+            except Exception:
+                pass
         else:
             self.session_errors[rom_id_str] = self.session_errors.get(rom_id_str, 0) + 1
+            try:
+                self.upload_status_signal.emit(f"Save upload failed: {title or rom_id_str}", 10000)
+            except Exception:
+                pass
 
     def _do_mid_session_sync(self, data):
         if not self.config.get("mid_session_sync_enabled", False):
@@ -596,6 +664,14 @@ class RomMateWatcher(QThread):
         strategy, rom = data['strategy'], data['game_data']
         rom_id = data['rom_id']
         title = data['title']
+
+        rom_id_str = str(rom_id)
+        if self.session_errors.get(rom_id_str, 0) >= 5:
+            logging.warning(f"[Watcher] Mid-session sync disabled for {title} after 5 consecutive errors")
+            return
+
+        if rom_id_str in self._sync_inflight_rom_ids:
+            return
         
         new_h = self._get_current_hash(strategy, rom)
         init_h = data.get('initial_hash')
@@ -616,8 +692,9 @@ class RomMateWatcher(QThread):
         # For mid-session, we don't necessarily update the mtime cache the same way as exit, 
         # but let's keep it consistent for tracking
         new_m = self._get_max_mtime(strategy, rom)
-        thread.done.connect(lambda name, ok: self._on_sync_thread_done(str(rom_id), new_m, ok))
+        thread.done.connect(lambda name, ok, uploaded_count: self._on_sync_thread_done(str(rom_id), new_m, ok, uploaded_count, name))
         
+        self._sync_inflight_rom_ids.add(rom_id_str)
         self._sync_threads.append(thread)
         thread.finished.connect(lambda t=thread: self._sync_threads.remove(t) if t in self._sync_threads else None)
         thread.start()

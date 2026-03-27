@@ -88,6 +88,9 @@ class RomMateMainWindow(QMainWindow):
         self._restore_maximized_applied = False
         self._is_shutting_down = False
         self._shutdown_complete = False
+        self._upload_status_timer = QTimer(self)
+        self._upload_status_timer.setSingleShot(True)
+        self._upload_status_timer.timeout.connect(self._clear_upload_status)
         
         # Custom window frame setup
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
@@ -1208,7 +1211,60 @@ class RomMateMainWindow(QMainWindow):
                         self.watcher.sync_cache_updated_signal.connect(handler, Qt.QueuedConnection)
                     except Exception:
                         pass
+            if hasattr(self.watcher, 'upload_status_signal'):
+                try:
+                    self.watcher.upload_status_signal.connect(self._on_upload_status, Qt.QueuedConnection)
+                except Exception:
+                    pass
+            if hasattr(self.watcher, 'cloud_probe_request_signal'):
+                try:
+                    probe_handler = getattr(self.library_tab, 'request_cloud_probe_for_rom', None)
+                except Exception:
+                    probe_handler = None
+                if probe_handler:
+                    try:
+                        self.watcher.cloud_probe_request_signal.connect(probe_handler, Qt.QueuedConnection)
+                    except Exception:
+                        pass
             self.watcher.start()
+
+    @Slot(str, int)
+    def _on_upload_status(self, status_text, auto_clear_ms):
+        try:
+            if not hasattr(self, 'title_bar'):
+                return
+
+            text = str(status_text or "").strip()
+            if not text:
+                self._clear_upload_status()
+                return
+
+            self.title_bar.set_activity(text)
+            try:
+                self._upload_status_timer.stop()
+            except Exception:
+                pass
+
+            try:
+                clear_ms = int(auto_clear_ms or 0)
+            except Exception:
+                clear_ms = 0
+
+            if clear_ms > 0:
+                self._upload_status_timer.start(clear_ms)
+        except Exception:
+            return
+
+    @Slot()
+    def _clear_upload_status(self):
+        try:
+            if not hasattr(self, 'title_bar'):
+                return
+            if bool(getattr(self.library_tab, '_cloud_probe_activity_visible', False)):
+                return
+            self.title_bar.clear_activity()
+        except Exception:
+            return
 
     @Slot(int, int)
     def _on_playtime_updated(self, rom_id, total_seconds):
